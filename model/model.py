@@ -69,7 +69,10 @@ class DDPM(BaseModel):
         with torch.no_grad():
             self.output, self.stage1_output, self.out_T, self.out_A, self.out_I = self.netH((self.data['SR'] + 1.0) / 2.0)
             condition = torch.cat([self.output/0.5 - 1, self.out_T/0.5 - 1], dim=1)
-            self.SR = self.netG.super_resolution(condition)
+            if isinstance(self.netG, nn.DataParallel):
+                self.SR = self.netG.module.super_resolution(condition)
+            else:
+                self.SR = self.netG.super_resolution(condition)
 
         self.netG.train()
         self.netH.train()
