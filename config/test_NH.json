@@ -2,15 +2,15 @@
     "name": "Dehaze_test",
     "phase": "train", // train or val
     "gpu_ids": [
-        0
+        3
     ],
     "path": { //set the path
         "log": "logs",
         "tb_logger": "tb_logger",
         "results": "results",
         "checkpoint": "checkpoint",
-        "resume_state": "/mnt/workspace/workgroup/yuhu/code/DehazeDDPM/Diffusion_trained_pth/NH_I230000_E4600",
-        "resume_stateH": "/mnt/workspace/workgroup/yuhu/code/DehazeDDPM/pretrained_PreNet_pth/NH_net_g_80000.pth"
+        "resume_state": "./Diffusion_trained_pth/NH_I230000_E4600",
+        "resume_stateH": "./pretrained_PreNet_pth/NH_net_g_80000.pth"
     },
     "datasets": {
         "train": {
@@ -27,8 +27,8 @@
         },
         "val": {
             "name": "SOTS",
-            "img_sizeH": 1200, //576, //512 , // whether need LR img
-            "img_sizeW": 1600, //768, //672 , // whether need LR img
+            "img_sizeH": 512, //576, //512 , // whether need LR img
+            "img_sizeW": 672, //768, //672 , // whether need LR img
             "datarootlq": "./data/NH-HAZE/hazy_test",
             "dataroothq": "./data/NH-HAZE/gt_test",
             "datatype": "img", //lmdb or img, path of img files
