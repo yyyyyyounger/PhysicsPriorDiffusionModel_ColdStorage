@@ -158,9 +158,23 @@ class DDPM(BaseModel):
             if isinstance(self.netG, nn.DataParallel):
                 network = network.module
             net = torch.load(gen_path)
-            net.pop("denoise_fn.downs.0.weight")
-            network.load_state_dict(net, strict=False)
-            #network.load_state_dict(torch.load(gen_path), strict=(not self.opt['model']['finetune_norm']))
+            if self.opt['phase'] == 'train':
+                model_dict = network.state_dict()
+                pretrained_dict = {
+                    k: v
+                    for k, v in net.items()
+                    if k in model_dict and v.shape == model_dict[k].shape
+                }
+                skipped = set(net.keys()) - set(pretrained_dict.keys())
+                if skipped:
+                    sample = list(skipped)[:12]
+                    logger.info(
+                        'Skipped {} pretrained G keys (missing or shape mismatch). Sample: {}'.format(
+                            len(skipped), sample))
+                model_dict.update(pretrained_dict)
+                network.load_state_dict(model_dict)
+            else:
+                network.load_state_dict(net)
             
             
             # network.load_state_dict(torch.load(gen_path), strict=False)
