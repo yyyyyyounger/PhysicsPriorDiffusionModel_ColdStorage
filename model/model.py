@@ -24,6 +24,8 @@ class DDPM(BaseModel):
         # set loss and load resume state
         self.set_loss()
         self.set_new_noise_schedule(opt['model']['beta_schedule']['train'], schedule_phase='train')
+        self.finetune_netH = opt['model'].get('finetune_netH', False)
+
         if self.opt['phase'] == 'train':
             self.netG.train()
             self.netH.train()
@@ -38,11 +40,40 @@ class DDPM(BaseModel):
                         optim_params.append(v)
                         logger.info('Params [{:s}] initialized to 0 and will optimize.'.format(k))
             else:
-                #optim_params = list(self.netG.parameters()) + list(self.netH.parameters())
                 optim_params = list(self.netG.parameters())
 
+            if self.finetune_netH:
+                netH_unfreeze_prefixes = (
+                    'layer0_.', 'layer1_.', 'layer2_.', 'layer3_.', 'layer4_.',
+                    'layer_0_.', 'layer_1_.', 'layer_2_.', 'layer_3_.',
+                    'res0_.', 'res1_.', 'res2_.', 'res3_.', 'res4_.',
+                    'res_0_.', 'res_1_.', 'res_2_.', 'res_3_.',
+                    'fusion1_.', 'fusion2_.', 'fusion3_.', 'fusion4_.',
+                    'fusion_0_.', 'fusion_1_.', 'fusion_2_.', 'fusion_3_.',
+                    'csff_', 'sam.', 'concat.', 'last.', 'conv_T_', 'ANet.',
+                )
+                netH_finetune_params = []
+                netH_frozen_count = 0
+                for k, v in self.netH.named_parameters():
+                    if k.startswith(netH_unfreeze_prefixes):
+                        v.requires_grad = True
+                        netH_finetune_params.append(v)
+                    else:
+                        v.requires_grad = False
+                        netH_frozen_count += 1
+                logger.info('NetH: unfreezing {} params, freezing {} params'.format(
+                    len(netH_finetune_params), netH_frozen_count))
 
-            self.optG = torch.optim.Adam(optim_params, lr=opt['train']["optimizer"]["lr"])
+                lr_netH = opt['train']['optimizer'].get('lr_netH', 1e-5)
+                param_groups = [
+                    {'params': optim_params, 'lr': opt['train']['optimizer']['lr']},
+                    {'params': netH_finetune_params, 'lr': lr_netH},
+                ]
+                self.optG = torch.optim.Adam(param_groups)
+            else:
+                for v in self.netH.parameters():
+                    v.requires_grad = False
+                self.optG = torch.optim.Adam(optim_params, lr=opt['train']["optimizer"]["lr"])
             self.log_dict = OrderedDict()
         self.load_network()
         self.print_network()
@@ -150,6 +181,15 @@ class DDPM(BaseModel):
 
         logger.info('Saved model in [{:s}] ...'.format(gen_path))
 
+        if self.finetune_netH:
+            netH_path = os.path.join(
+                self.opt['path']['checkpoint'], 'I{}_E{}_netH.pth'.format(iter_step, epoch))
+            state_dictH = self.netH.state_dict()
+            for key, param in state_dictH.items():
+                state_dictH[key] = param.cpu()
+            torch.save(state_dictH, netH_path)
+            logger.info('Saved netH in [{:s}] ...'.format(netH_path))
+
     def load_network(self):
         load_pathG = self.opt['path']['resume_state']
         if load_pathG is not None:
@@ -188,14 +228,19 @@ class DDPM(BaseModel):
             #    self.begin_step = opt['iter']
             #    self.begin_epoch = opt['epoch']
 
+        load_pathH_ft = self.opt['path'].get('resume_stateH_finetune')
         load_pathH = self.opt['path']['resume_stateH']
-        if load_pathH is not None:
+
+        if load_pathH_ft is not None:
+            logger.info('Loading finetuned netH from [{:s}] ...'.format(load_pathH_ft))
+            network = self.netH
+            state_dict = torch.load(load_pathH_ft, map_location=lambda storage, loc: storage)
+            network.load_state_dict(state_dict)
+        elif load_pathH is not None:
             logger.info('Loading pretrained model for H [{:s}] ...'.format(load_pathH))
             network = self.netH
             load_net = torch.load(load_pathH, map_location=lambda storage, loc: storage)
             load_net = load_net['params']
-            # load_net = load_net['model']
-            # remove unnecessary 'module.'
             for k, v in deepcopy(load_net).items():
                 if k.startswith('module.'):
                     load_net[k[7:]] = v
