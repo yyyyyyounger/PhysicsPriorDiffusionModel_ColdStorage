@@ -1,5 +1,5 @@
 {
-    "name": "Dehaze_ColdFog_finetune",
+    "name": "Dehaze_ColdFog_finetune_only_diffusion",
     "phase": "train",
     "gpu_ids": [
         2, 3

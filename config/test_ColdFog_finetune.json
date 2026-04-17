@@ -1,5 +1,5 @@
 {
-    "name": "Dehaze_ColdFog_finetune_test",
+    "name": "Dehaze_ColdFog_finetune_test_only_diffusion",
     "phase": "train",
     "gpu_ids": [
         0
@@ -9,7 +9,7 @@
         "tb_logger": "tb_logger",
         "results": "results",
         "checkpoint": "checkpoint",
-        "resume_state": "./checkpoint/REPLACE_WITH_BEST_FINETUNE_PREFIX",
+        "resume_state": "/mnt/newdisk/Documents/linzhanyang/DehazeDDPM/experiments/Dehaze_ColdFog_finetune_260405_120026/checkpoint/I15000_E54",
         "resume_stateH": "./pretrained_PreNet_pth/DENSE_net_g_120000.pth"
     },
     "datasets": {
@@ -27,8 +27,8 @@
         },
         "val": {
             "name": "ColdFog_dehazeddpm_test",
-            "img_sizeH": 512,
-            "img_sizeW": 672,
+            "img_sizeH": 448,
+            "img_sizeW": 576,
             "datarootlq": "/mnt/newdisk/Documents/linzhanyang/data/dehazeddpm_test/hazy_test",
             "dataroothq": "/mnt/newdisk/Documents/linzhanyang/data/dehazeddpm_test/gt_test",
             "datatype": "img",
