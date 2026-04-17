@@ -10,7 +10,8 @@
         "results": "results",
         "checkpoint": "checkpoint",
         "resume_state": "/mnt/newdisk/Documents/linzhanyang/DehazeDDPM/experiments/Dehaze_ColdFog_finetune_netH_260406_223953/checkpoint/I90000_E322",
-        "resume_stateH": "/mnt/newdisk/Documents/linzhanyang/DehazeDDPM/experiments/Dehaze_ColdFog_finetune_netH_260406_223953/checkpoint/I90000_E322_netH.pth"
+        "resume_stateH": "./pretrained_PreNet_pth/DENSE_net_g_120000.pth",
+        "resume_stateH_finetune": "/mnt/newdisk/Documents/linzhanyang/DehazeDDPM/experiments/Dehaze_ColdFog_finetune_netH_260406_223953/checkpoint/I90000_E322_netH.pth"
     },
     "datasets": {
         "train": {
