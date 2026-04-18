@@ -1,8 +1,8 @@
 {
-    "name": "Dehaze_test",
+    "name": "Dehaze_test_DENSE_diy",
     "phase": "train", // train or val
     "gpu_ids": [
-        3
+        0
     ],
     "path": { //set the path
         "log": "logs",
@@ -26,9 +26,9 @@
             "len": -1 // -1 represents all data used in train
         },
         "val": {
-            "name": "SOTS",
-            "img_sizeH": 512, //576, //512 , // whether need LR img
-            "img_sizeW": 672, //768, //672 , // whether need LR img
+            "name": "ColdFog_dehazeddpm_test",
+            "img_sizeH": 448, //576, //512 , // whether need LR img
+            "img_sizeW": 576, //768, //672 , // whether need LR img
             "datarootlq": "/mnt/newdisk/Documents/linzhanyang/data/dehazeddpm_test/hazy_test",  
             "dataroothq": "/mnt/newdisk/Documents/linzhanyang/data/dehazeddpm_test/gt_test", 
             "datatype": "img", //lmdb or img, path of img files
