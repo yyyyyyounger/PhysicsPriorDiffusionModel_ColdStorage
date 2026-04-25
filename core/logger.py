@@ -34,9 +34,14 @@ def parse(args):
     # set log directory
     if args.debug:
         opt['name'] = 'debug_{}'.format(opt['name'])
-    experiments_root = os.path.join(
-        'experiments', '{}_{}'.format(opt['name'], get_timestamp()))
+    reuse_root = opt['path'].get('reuse_experiments_root')
+    if reuse_root:
+        experiments_root = os.path.abspath(reuse_root)
+    else:
+        experiments_root = os.path.join(
+            'experiments', '{}_{}'.format(opt['name'], get_timestamp()))
     opt['path']['experiments_root'] = experiments_root
+    opt['path']['_resume_same_exp'] = bool(reuse_root)
     for key, path in opt['path'].items():
         if 'resume' not in key and 'experiments' not in key:
             opt['path'][key] = os.path.join(experiments_root, path)
@@ -125,13 +130,13 @@ def dict2str(opt, indent_l=1):
     return msg
 
 
-def setup_logger(logger_name, root, phase, level=logging.INFO, screen=False):
+def setup_logger(logger_name, root, phase, level=logging.INFO, screen=False, file_mode='w'):
     '''set up logger'''
     l = logging.getLogger(logger_name)
     formatter = logging.Formatter(
         '%(asctime)s.%(msecs)03d - %(levelname)s: %(message)s', datefmt='%y-%m-%d %H:%M:%S')
     log_file = os.path.join(root, '{}.log'.format(phase))
-    fh = logging.FileHandler(log_file, mode='w')
+    fh = logging.FileHandler(log_file, mode=file_mode)
     fh.setFormatter(formatter)
     l.setLevel(level)
     l.addHandler(fh)

@@ -31,8 +31,10 @@ if __name__ == "__main__":
     torch.backends.cudnn.enabled = True
     torch.backends.cudnn.benchmark = True
 
-    Logger.setup_logger(None, opt['path']['log'], 'train', level=logging.INFO, screen=True)
-    Logger.setup_logger('val', opt['path']['log'], 'val', level=logging.INFO)
+    _log_mode = 'a' if opt['path'].get('_resume_same_exp') else 'w'
+    Logger.setup_logger(
+        None, opt['path']['log'], 'train', level=logging.INFO, screen=True, file_mode=_log_mode)
+    Logger.setup_logger('val', opt['path']['log'], 'val', level=logging.INFO, file_mode=_log_mode)
     logger = logging.getLogger('base')
     logger.info(Logger.dict2str(opt))
     tb_logger = SummaryWriter(log_dir=opt['path']['tb_logger'])

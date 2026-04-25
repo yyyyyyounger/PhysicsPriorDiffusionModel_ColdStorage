@@ -195,12 +195,12 @@ class DDPM(BaseModel):
         if load_pathG is not None:
             logger.info('Loading pretrained model for G [{:s}] ...'.format(load_pathG))
             gen_path = '{}_gen.pth'.format(load_pathG)
-            #opt_path = '{}_opt.pth'.format(load_pathG)
+            opt_path = '{}_opt.pth'.format(load_pathG)
             # gen
             network = self.netG
             if isinstance(self.netG, nn.DataParallel):
                 network = network.module
-            net = torch.load(gen_path)
+            net = torch.load(gen_path, map_location=self.device)
             if self.opt['phase'] == 'train':
                 model_dict = network.state_dict()
                 pretrained_dict = {
@@ -218,15 +218,20 @@ class DDPM(BaseModel):
                 network.load_state_dict(model_dict)
             else:
                 network.load_state_dict(net)
-            
-            
-            # network.load_state_dict(torch.load(gen_path), strict=False)
-            #if self.opt['phase'] == 'train':
-            #    # optimizer
-            #    opt = torch.load(opt_path)
-            #    self.optG.load_state_dict(opt['optimizer'])
-            #    self.begin_step = opt['iter']
-            #    self.begin_epoch = opt['epoch']
+
+            if self.opt['phase'] == 'train' and os.path.isfile(opt_path):
+                ckpt = torch.load(opt_path, map_location=self.device)
+                if ckpt.get('optimizer') is not None:
+                    self.optG.load_state_dict(ckpt['optimizer'])
+                self.begin_step = ckpt.get('iter', self.begin_step)
+                self.begin_epoch = ckpt.get('epoch', self.begin_epoch)
+                logger.info(
+                    'Loaded training state from [{:s}] (epoch={}, iter={}).'.format(
+                        opt_path, self.begin_epoch, self.begin_step))
+            elif self.opt['phase'] == 'train':
+                logger.info(
+                    'No optimizer state at [{:s}]; starting from iter=0, epoch=0 (weights only).'.format(
+                        opt_path))
 
         load_pathH_ft = self.opt['path'].get('resume_stateH_finetune')
         load_pathH = self.opt['path']['resume_stateH']
