@@ -45,6 +45,47 @@ CUDA_VISIBLE_DEVICES=3 bash testDENSE.sh
 
 **注意：** 存檔頻率由 `train.save_checkpoint_freq` 決定。若中斷發生在兩次存檔之間，磁碟上只有**上一個** checkpoint，接續後會從該點重跑中間未落盤的 iteration。TensorBoard 沿用同一 `tb_logger` 目錄時可能產生多個 event 檔，一般仍可一併檢視。
 
+### 驗證／推理採樣器設定（`beta_schedule.val`）
+
+僅當 **`model.which_model_G` 為 `"sr3"`** 時，`GaussianDiffusion.super_resolution()` 會依設定切換採樣器；`ddpm` 路徑仍為完整反向鏈，與既有 checkpoint 相容。
+
+設定寫在 JSON 的 **`model.beta_schedule.val`**（與 `schedule`、`n_timestep`、`linear_start`、`linear_end` 同層）。**訓練**仍只使用 **`beta_schedule.train`**，不需也不應在 `train` 區塊加 `sampler`。
+
+| 欄位 | 說明 |
+|------|------|
+| **`sampler`** | 選採樣器：省略或省略整個鍵行為時，在載入 **僅含 train 的 schedule**（例如 `sr.py` 驗證後切回 train）會重設為 **`ddpm`**。可選字串（不分大小寫）：**`ddpm`**（完整 \(T\) 步）、**`ddim`**、**`dpm_solver_pp`**（亦可寫 **`dpm_solver++`**，程式會正規化成底線形式）。 |
+| **`sample_steps`** | **僅對 `ddim` / `dpm_solver_pp` 有意義**。從完整時間表（長度為 **`n_timestep`**）做跳步採樣的目標步數；**不要**為了加速而把 **`val.n_timestep`** 改成遠小於訓練時的步數來冒充少步推理（會破壞與訓練一致的 \(\bar\alpha\) 離散化）。若省略：**`ddim` 預設 100**，**`dpm_solver_pp` 預設 50**。**`ddpm`** 會忽略此欄，固定跑 **`n_timestep`** 步。 |
+| **`ddim_eta`** | **僅 `ddim` 使用**。\( \eta = 0 \) 為確定性 DDIM；\( \eta > 0 \) 會注入隨機性（類 DDPM）。預設可設 **`0.0`**。 |
+
+**範例片段（DDIM，100 步）：**
+
+```json
+"val": {
+  "schedule": "linear",
+  "n_timestep": 2000,
+  "linear_start": 1e-6,
+  "linear_end": 1e-2,
+  "sampler": "ddim",
+  "sample_steps": 100,
+  "ddim_eta": 0.0
+}
+```
+
+**範例片段（DPM-Solver++，50 步）：**
+
+```json
+"val": {
+  "schedule": "linear",
+  "n_timestep": 2000,
+  "linear_start": 1e-6,
+  "linear_end": 1e-2,
+  "sampler": "dpm_solver_pp",
+  "sample_steps": 50
+}
+```
+
+**程式入口對應：** `sr.py` 在驗證階段會載入 `beta_schedule.val`；`infer.py` 亦使用 **`beta_schedule.val`** 做推理。專案中已有對照用設定：`config/test_ColdFog_finetune_ddim.json`、`config/test_ColdFog_finetune_dpm_solver_pp.json`，以及 `testColdFogFinetune_ddim.sh`、`testColdFogFinetune_dpm_solver_pp.sh`；完整 DDPM baseline 仍為 `config/test_ColdFog_finetune.json` 與 `testColdFogFinetune.sh`。
+
 跑我的數據集
 ```
 conda activate lzy_dehazeddpm

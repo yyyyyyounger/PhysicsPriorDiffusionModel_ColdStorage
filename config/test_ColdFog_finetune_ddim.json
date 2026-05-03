@@ -1,0 +1,99 @@
+{
+    "name": "Dehaze_ColdFog_finetune_test_ddim_only_diffusion",
+    "phase": "train",
+    "gpu_ids": [
+        0
+    ],
+    "path": {
+        "log": "logs",
+        "tb_logger": "tb_logger",
+        "results": "results",
+        "checkpoint": "checkpoint",
+        "resume_state": "/mnt/newdisk/Documents/linzhanyang/DehazeDDPM/experiments/Dehaze_ColdFog_finetune_260405_120026/checkpoint/I15000_E54",
+        "resume_stateH": "./pretrained_PreNet_pth/DENSE_net_g_120000.pth"
+    },
+    "datasets": {
+        "train": {
+            "name": "ITS",
+            "img_sizeH": 256,
+            "img_sizeW": 256,
+            "datarootlq": "/mnt/newdisk/Documents/linzhanyang/data/finetune/train_hazy",
+            "dataroothq": "/mnt/newdisk/Documents/linzhanyang/data/finetune/train_gt",
+            "datatype": "img",
+            "batch_size": 1,
+            "num_workers": 0,
+            "use_shuffle": true,
+            "len": -1
+        },
+        "val": {
+            "name": "ColdFog_dehazeddpm_test_ddim",
+            "img_sizeH": 448,
+            "img_sizeW": 576,
+            "datarootlq": "/mnt/newdisk/Documents/linzhanyang/data/dehazeddpm_test/hazy_test",
+            "dataroothq": "/mnt/newdisk/Documents/linzhanyang/data/dehazeddpm_test/gt_test",
+            "datatype": "img",
+            "len": -1
+        }
+    },
+    "model": {
+        "which_model_G": "sr3",
+        "finetune_norm": false,
+        "unet": {
+            "in_channel": 7,
+            "out_channel": 3,
+            "inner_channel": 64,
+            "channel_multiplier": [
+                1,
+                2,
+                4,
+                8,
+                8
+            ],
+            "attn_res": [
+                16
+            ],
+            "res_blocks": 2,
+            "dropout": 0.2
+        },
+        "beta_schedule": {
+            "train": {
+                "schedule": "linear",
+                "n_timestep": 2000,
+                "linear_start": 1e-6,
+                "linear_end": 1e-2
+            },
+            "val": {
+                "schedule": "linear",
+                "n_timestep": 2000,
+                "linear_start": 1e-6,
+                "linear_end": 1e-2,
+                "sampler": "ddim",
+                "sample_steps": 100,
+                "ddim_eta": 0.0
+            }
+        },
+        "diffusion": {
+            "image_size": 512,
+            "channels": 3,
+            "conditional": true
+        }
+    },
+    "train": {
+        "n_iter": 100000,
+        "val_freq": 5000,
+        "save_checkpoint_freq": 5000,
+        "print_freq": 200,
+        "optimizer": {
+            "type": "adam",
+            "lr": 5e-5
+        },
+        "ema_scheduler": {
+            "step_start_ema": 5000,
+            "update_ema_every": 1,
+            "ema_decay": 0.9999
+        }
+    },
+    "wandb": {
+        "project": "Dehaze"
+    }
+}

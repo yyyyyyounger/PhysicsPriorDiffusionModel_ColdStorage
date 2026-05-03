@@ -7,6 +7,8 @@ from functools import partial
 import numpy as np
 from tqdm import tqdm
 
+from .dpm_solver_pp import DPM_Solver_PlusPlus, NoiseScheduleVP
+
 def _warmup_beta(linear_start, linear_end, n_timestep, warmup_frac):
     betas = linear_end * np.ones(n_timestep, dtype=np.float64)
     warmup_time = int(n_timestep * warmup_frac)
@@ -76,6 +78,9 @@ class GaussianDiffusion(nn.Module):
         self.denoise_fn = denoise_fn
         self.loss_type = loss_type
         self.conditional = conditional
+        self.val_sampler = 'ddpm'
+        self.val_sample_steps = None
+        self.val_ddim_eta = 0.0
         if schedule_opt is not None:
             pass
             # self.set_new_noise_schedule(schedule_opt)
@@ -136,6 +141,22 @@ class GaussianDiffusion(nn.Module):
         self.register_buffer('posterior_mean_coef2', to_torch(
             (1. - alphas_cumprod_prev) * np.sqrt(alphas) / (1. - alphas_cumprod)))
 
+        if 'sampler' not in schedule_opt:
+            self.val_sampler = 'ddpm'
+            self.val_sample_steps = None
+            self.val_ddim_eta = 0.0
+        if 'sampler' in schedule_opt:
+            s = schedule_opt['sampler']
+            if isinstance(s, str):
+                s = s.strip().lower().replace('-', '_')
+            if s in ('dpm_solver++', 'dpm_solver_pp'):
+                s = 'dpm_solver_pp'
+            self.val_sampler = s
+        if 'sample_steps' in schedule_opt:
+            self.val_sample_steps = int(schedule_opt['sample_steps'])
+        if 'ddim_eta' in schedule_opt:
+            self.val_ddim_eta = float(schedule_opt['ddim_eta'])
+
     def predict_start_from_noise(self, x_t, t, noise):
         return self.sqrt_recip_alphas_cumprod[t] * x_t - self.sqrt_recipm1_alphas_cumprod[t] * noise
 
@@ -163,6 +184,93 @@ class GaussianDiffusion(nn.Module):
         model_mean, model_log_variance = self.p_mean_variance(x=x, t=t, clip_denoised=clip_denoised, condition_x=condition_x)
         noise = torch.randn_like(x) if t > 0 else torch.zeros_like(x)
         return model_mean + noise * (0.5 * model_log_variance).exp()
+
+    def _resolved_sample_steps(self):
+        if self.val_sampler == 'ddpm':
+            return self.num_timesteps
+        if self.val_sample_steps is not None:
+            return int(self.val_sample_steps)
+        return 100 if self.val_sampler == 'ddim' else 50
+
+    def _ddim_timestep_indices(self, sample_steps):
+        if sample_steps >= self.num_timesteps:
+            return list(reversed(range(self.num_timesteps)))
+        raw = np.linspace(self.num_timesteps - 1, 0, sample_steps + 1)
+        seq = np.clip(np.round(raw).astype(np.int64), 0, self.num_timesteps - 1)
+        out = [int(seq[0])]
+        for s in seq[1:]:
+            si = int(s)
+            if si < out[-1]:
+                out.append(si)
+        if out[-1] != 0:
+            out.append(0)
+        return out
+
+    def _predict_eps_at_tindex(self, x, t_index, condition_x=None):
+        batch_size = x.shape[0]
+        device = x.device
+        noise_level = self.sqrt_alphas_cumprod_prev[t_index + 1].view(1).expand(batch_size, 1).to(device)
+        if condition_x is not None:
+            return self.denoise_fn(torch.cat([condition_x, x], dim=1), noise_level)
+        return self.denoise_fn(x, noise_level)
+
+    @torch.no_grad()
+    def ddim_sample_loop(self, condition):
+        device = self.betas.device
+        eta = self.val_ddim_eta
+        steps_target = min(max(self._resolved_sample_steps(), 1), self.num_timesteps)
+        time_indices = self._ddim_timestep_indices(steps_target)
+        if not self.conditional:
+            shape = condition
+            img = torch.randn(shape, device=device)
+            cond_x = None
+        else:
+            cond_x = condition
+            b, c, h, w = cond_x.shape
+            img = torch.randn([b, 3, h, w], device=device)
+        n_step = len(time_indices) - 1
+        for k in tqdm(range(n_step), desc='ddim sampling step', total=n_step):
+            t_curr = time_indices[k]
+            t_next = time_indices[k + 1]
+            eps = self._predict_eps_at_tindex(img, t_curr, condition_x=cond_x)
+            a_cur = self.alphas_cumprod[t_curr].view(1, 1, 1, 1)
+            a_prev = self.alphas_cumprod[t_next].view(1, 1, 1, 1)
+            pred_x0 = (img - (1.0 - a_cur).sqrt() * eps) / a_cur.sqrt()
+            pred_x0 = pred_x0.clamp(-1.0, 1.0)
+            if eta == 0.0:
+                c_sigma = torch.zeros(1, 1, 1, 1, device=device)
+            else:
+                c_sigma = eta * ((1.0 - a_prev) / (1.0 - a_cur) * (1.0 - a_cur / a_prev).clamp(min=0.0)).sqrt()
+                c_sigma = c_sigma.view(1, 1, 1, 1)
+            pred_dir = (1.0 - a_prev - c_sigma ** 2).clamp(min=0.0).sqrt() * eps
+            img = a_prev.sqrt() * pred_x0 + pred_dir
+            if eta > 0.0 and t_next > 0:
+                img = img + c_sigma * torch.randn_like(img)
+        return img
+
+    @torch.no_grad()
+    def dpm_solver_pp_sample_loop(self, condition):
+        device = self.betas.device
+        steps = min(max(self._resolved_sample_steps(), 2), self.num_timesteps)
+        if not self.conditional:
+            shape = condition
+            x = torch.randn(shape, device=device)
+            cond_x = None
+        else:
+            cond_x = condition
+            b, c, h, w = cond_x.shape
+            x = torch.randn([b, 3, h, w], device=device)
+        ns = NoiseScheduleVP(self.alphas_cumprod.detach().to(device), eps=1e-20)
+
+        def noise_pred_fn(x_in, t_batch):
+            alpha_t = ns.marginal_alpha(t_batch)
+            noise_level = alpha_t.view(-1, 1)
+            if cond_x is not None:
+                return self.denoise_fn(torch.cat([cond_x, x_in], dim=1), noise_level)
+            return self.denoise_fn(x_in, noise_level)
+
+        solver = DPM_Solver_PlusPlus(noise_pred_fn, ns, clip_denoised=True)
+        return solver.sample_multistep(x, steps=steps, order=2, skip_type='time_uniform')
 
     @torch.no_grad()
     def p_sample_loop(self, condition):
@@ -193,6 +301,11 @@ class GaussianDiffusion(nn.Module):
 
     @torch.no_grad()
     def super_resolution(self, condition):
+        name = getattr(self, 'val_sampler', 'ddpm')
+        if name == 'ddim':
+            return self.ddim_sample_loop(condition)
+        if name == 'dpm_solver_pp':
+            return self.dpm_solver_pp_sample_loop(condition)
         return self.p_sample_loop(condition)
 
     def q_sample(self, x_start, continuous_sqrt_alpha_cumprod, noise=None):
