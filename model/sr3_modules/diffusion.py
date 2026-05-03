@@ -209,7 +209,8 @@ class GaussianDiffusion(nn.Module):
     def _predict_eps_at_tindex(self, x, t_index, condition_x=None):
         batch_size = x.shape[0]
         device = x.device
-        noise_level = self.sqrt_alphas_cumprod_prev[t_index + 1].view(1).expand(batch_size, 1).to(device)
+        # sqrt_alphas_cumprod_prev is numpy; avoid .view(1) on numpy (interpreted as dtype).
+        noise_level = torch.FloatTensor([self.sqrt_alphas_cumprod_prev[t_index + 1]]).repeat(batch_size, 1).to(device)
         if condition_x is not None:
             return self.denoise_fn(torch.cat([condition_x, x], dim=1), noise_level)
         return self.denoise_fn(x, noise_level)
