@@ -84,6 +84,14 @@ CUDA_VISIBLE_DEVICES=3 bash testDENSE.sh
 }
 ```
 
+**採樣器調參建議：**
+
+- **DDIM / DPM-Solver++ 不需要重新訓練。** 它們只改變驗證／推理時的反向採樣方式，不引入新的可訓練參數；後續訓練仍保持 `beta_schedule.train` 原設定即可。
+- **不要為了加速改小 `val.n_timestep`。** `n_timestep`、`linear_start`、`linear_end` 應與訓練 schedule 保持一致，例如本專案 finetune 設定為 `2000 / 1e-6 / 1e-2`。少步推理請只調 `sample_steps`。
+- **DPM-Solver++ 優先調 `sample_steps`。** 目前程式中 `order=2`、`skip_type='time_uniform'`、`clip_denoised=True` 是固定的；若 50 步結果有噪點，建議依序測 `75`、`100`、`150`、`200`，通常步數增加會提升穩定性但推理更慢。
+- **DDIM 建議先用確定性設定。** `ddim_eta: 0.0` 通常更穩；若影像已有噪點，不建議先增大 `ddim_eta`，因為 `eta > 0` 會額外注入隨機性。可對照測 `sample_steps: 100` 與 `200`。
+- **實驗比較建議。** 用完整 DDPM（`ddpm`，2000 步）作為品質 baseline，再比較 `DPM-Solver++ 50/100/150`、`DDIM 100/200` 的 PSNR、SSIM 與視覺效果；若高步數仍有明顯噪點，問題更可能來自模型權重、冷庫資料分佈或第一階段 `netH` 條件圖品質，而不是採樣器本身。
+
 **程式入口對應：** `sr.py` 在驗證階段會載入 `beta_schedule.val`；`infer.py` 亦使用 **`beta_schedule.val`** 做推理。專案中已有對照用設定：`config/test_ColdFog_finetune_ddim.json`、`config/test_ColdFog_finetune_dpm_solver_pp.json`，以及 `testColdFogFinetune_ddim.sh`、`testColdFogFinetune_dpm_solver_pp.sh`；完整 DDPM baseline 仍為 `config/test_ColdFog_finetune.json` 與 `testColdFogFinetune.sh`。
 
 跑我的數據集
