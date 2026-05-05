@@ -217,7 +217,48 @@ class DDPM(BaseModel):
                 model_dict.update(pretrained_dict)
                 network.load_state_dict(model_dict)
             else:
-                network.load_state_dict(net)
+                model_dict = network.state_dict()
+                schedule_buffer_keys = {
+                    'betas',
+                    'alphas_cumprod',
+                    'alphas_cumprod_prev',
+                    'sqrt_alphas_cumprod',
+                    'sqrt_one_minus_alphas_cumprod',
+                    'log_one_minus_alphas_cumprod',
+                    'sqrt_recip_alphas_cumprod',
+                    'sqrt_recipm1_alphas_cumprod',
+                    'posterior_variance',
+                    'posterior_log_variance_clipped',
+                    'posterior_mean_coef1',
+                    'posterior_mean_coef2',
+                }
+                skipped_schedule = [
+                    k for k, v in net.items()
+                    if k in schedule_buffer_keys
+                    and k in model_dict
+                    and v.shape != model_dict[k].shape
+                ]
+                if skipped_schedule:
+                    load_dict = {
+                        k: v for k, v in net.items()
+                        if k not in skipped_schedule
+                    }
+                    incompatible = network.load_state_dict(load_dict, strict=False)
+                    unexpected = list(incompatible.unexpected_keys)
+                    missing = [
+                        k for k in incompatible.missing_keys
+                        if k not in skipped_schedule
+                    ]
+                    if unexpected or missing:
+                        raise RuntimeError(
+                            'Error(s) in loading state_dict for {}:\n'
+                            '\tMissing keys: {}\n\tUnexpected keys: {}'.format(
+                                network.__class__.__name__, missing, unexpected))
+                    logger.info(
+                        'Skipped {} schedule buffers with mismatched shapes: {}'.format(
+                            len(skipped_schedule), skipped_schedule))
+                else:
+                    network.load_state_dict(net)
 
             if self.opt['phase'] == 'train' and os.path.isfile(opt_path):
                 ckpt = torch.load(opt_path, map_location=self.device)

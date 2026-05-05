@@ -6,8 +6,15 @@ import torch.nn as nn
 class BaseModel():
     def __init__(self, opt):
         self.opt = opt
-        self.device = torch.device(
-            'cuda' if opt['gpu_ids'] is not None else 'cpu')
+        gpu_ids = opt.get('gpu_ids')
+        use_cuda = gpu_ids is not None and len(gpu_ids) > 0
+        local_rank = opt.get('local_rank')
+        if not use_cuda:
+            self.device = torch.device('cpu')
+        elif local_rank is not None:
+            self.device = torch.device('cuda:{}'.format(int(local_rank)))
+        else:
+            self.device = torch.device('cuda')
         self.begin_step = 0
         self.begin_epoch = 0
 

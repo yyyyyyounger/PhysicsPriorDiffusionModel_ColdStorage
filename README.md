@@ -103,6 +103,23 @@ CUDA_VISIBLE_DEVICES=3 python infer.py --config ./config/test_DENSE_diy.json
 CUDA_VISIBLE_DEVICES=2 python infer.py --config ./config/test_NH_diy.json
 ```
 
+### `infer.py` 多 GPU 推理（依樣本切分）
+
+當設定檔中 **`gpu_ids` 超過一張**（例如 `[0, 1]`），或使用 **`python infer.py ... -gpu 0,1`** 時，程式會以 **`torch.multiprocessing.spawn`** 為每張可見 GPU 啟動一個進程，並將驗證集按 **樣本索引交錯切分**（rank `r` 處理索引 `r, r+W, r+2W, ...`）。每個進程各自載入完整模型並綁定 **`cuda:{local_rank}`**，且會將 **`distributed` 設為 False**，避免子進程再包一層 `DataParallel`。
+
+- **輸出檔名**：使用資料集中的 **`Index + 1`** 作為檔名中的序號（與單卡時「第 k 張圖對應 `{step}_{k+1}_*.png`」一致），多進程並行寫入同一 `results` 目錄時不會互相覆蓋。
+- **整體 PSNR**：主進程依各 worker 回傳的樣本加權平均彙總。
+- **日誌**：各 GPU 的細節寫入 **`logs/infer_rank{0,1,...}.log`**；主進程終端仍會印出總平均 PSNR。
+- **W&B**：多 GPU 模式下若開啟 **`log_infer`**，為避免多進程重複上傳，**會跳過**逐張 `log_eval_data`／表格；若需要完整 W&B 推理紀錄請改用 **單卡**。
+
+範例：
+
+```bash
+bash testColdFogFinetune_ddim.sh -gpu 0,1
+# 或在 JSON 中設定 "gpu_ids": [0, 1] 後直接：
+python infer.py --config config/test_ColdFog_finetune_ddim.json
+```
+
 
 後臺運行
 ```

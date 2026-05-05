@@ -51,17 +51,26 @@ def parse(args):
     opt['phase'] = phase
 
     # export CUDA_VISIBLE_DEVICES
+    # Use comma-separated physical GPU IDs for the env var; use len(gpu_id_list)
+    # for multi-GPU detection (not len(string), which mis-counts e.g. GPU id "10").
     if gpu_ids is not None:
-        opt['gpu_ids'] = [int(id) for id in gpu_ids.split(',')]
-        gpu_list = gpu_ids
+        opt['gpu_ids'] = [
+            int(x.strip())
+            for x in gpu_ids.split(',')
+            if x.strip() != ''
+        ]
+        gpu_list = gpu_ids.replace(' ', '')
     else:
         gpu_list = ','.join(str(x) for x in opt['gpu_ids'])
     os.environ['CUDA_VISIBLE_DEVICES'] = gpu_list
     print('export CUDA_VISIBLE_DEVICES=' + gpu_list)
-    if len(gpu_list) > 1:
-        opt['distributed'] = True
-    else:
-        opt['distributed'] = False
+
+    gpu_id_list = opt.get('gpu_ids')
+    num_gpus = len(gpu_id_list) if gpu_id_list is not None else 0
+    opt['distributed'] = bool(num_gpus > 1)
+
+    # infer.py multiprocessing workers set local_rank per process
+    opt.setdefault('local_rank', None)
 
     # debug
     if 'debug' in opt['name']:
@@ -73,6 +82,8 @@ def parse(args):
         opt['model']['beta_schedule']['val']['n_timestep'] = 10
         opt['datasets']['train']['data_len'] = 6
         opt['datasets']['val']['data_len'] = 3
+        opt['datasets']['train']['len'] = 6
+        opt['datasets']['val']['len'] = 3
 
     # validation in train phase
     if phase == 'train':
