@@ -12,6 +12,7 @@ from tensorboardX import SummaryWriter
 
 import core.logger as Logger
 import core.metrics as Metrics
+import core.seed as Seed
 import data as Data
 import model as Model
 from core.wandb_logger import WandbLogger
@@ -65,7 +66,9 @@ def run_inference_worker(opt, rank, world_size, wandb_logger=None,
                     subset, batch_size=1, shuffle=False,
                     num_workers=0, pin_memory=False)
             else:
-                val_loader = Data.create_dataloader(subset, dataset_opt, phase)
+                val_loader = Data.create_dataloader(
+                    subset, dataset_opt, phase,
+                    manual_seed=opt['manual_seed'])
             prefix = ('Worker rank {}: '.format(rank)) if world_size > 1 else ''
             logger.info(
                 '{}val shard {} / {} samples (world_size={}).'.format(
@@ -93,13 +96,18 @@ def run_inference_worker(opt, rank, world_size, wandb_logger=None,
     psnr_sum = 0.0
     count = 0
 
+    manual_seed = opt['manual_seed']
+    if manual_seed is None:
+        manual_seed = 42
+
     for val_data in val_loader:
+        idx_tensor = val_data['Index']
+        sample_idx_1based = int(idx_tensor.detach().cpu().view(-1)[0].item()) + 1
+        Seed.set_sample_seed(int(manual_seed) + sample_idx_1based)
+
         diffusion.feed_data(val_data)
         diffusion.test(continous=True)
         visuals = diffusion.get_current_visuals()
-
-        idx_tensor = val_data['Index']
-        sample_idx_1based = int(idx_tensor.detach().cpu().view(-1)[0].item()) + 1
 
         hr_img = Metrics.tensor2img(visuals['HR'])
         lr_img = Metrics.tensor2img(visuals['LR'])
@@ -154,8 +162,10 @@ def _infer_spawn_fn(rank, opt_plain, metrics_dir):
     opt['local_rank'] = rank
     opt['distributed'] = False
 
-    torch.backends.cudnn.enabled = True
-    torch.backends.cudnn.benchmark = True
+    Seed.set_seed(
+        opt['manual_seed'],
+        deterministic=bool(opt.get('manual_seed_deterministic')),
+    )
 
     psnr_sum, count = run_inference_worker(
         opt, rank=rank, world_size=len(opt_plain['gpu_ids']),
@@ -186,8 +196,10 @@ def main():
     opt = Logger.parse(args)
     opt = Logger.dict_to_nonedict(opt)
 
-    torch.backends.cudnn.enabled = True
-    torch.backends.cudnn.benchmark = True
+    Seed.set_seed(
+        opt['manual_seed'],
+        deterministic=bool(opt.get('manual_seed_deterministic')),
+    )
 
     gpu_ids = opt['gpu_ids']
     num_gpus = len(gpu_ids) if gpu_ids is not None else 0

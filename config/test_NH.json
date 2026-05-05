@@ -4,6 +4,8 @@
     "gpu_ids": [
         3
     ],
+    "manual_seed": 42,
+    "manual_seed_deterministic": false,
     "path": { //set the path
         "log": "logs",
         "tb_logger": "tb_logger",

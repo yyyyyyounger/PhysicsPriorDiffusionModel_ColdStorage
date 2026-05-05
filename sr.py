@@ -4,6 +4,7 @@ import model as Model
 import argparse
 import logging
 import core.logger as Logger
+import core.seed as Seed
 import core.metrics as Metrics
 from core.wandb_logger import WandbLogger
 from tensorboardX import SummaryWriter
@@ -27,9 +28,12 @@ if __name__ == "__main__":
     # Convert to NoneDict, which return None for missing key.
     opt = Logger.dict_to_nonedict(opt)
 
+    Seed.set_seed(
+        opt['manual_seed'],
+        deterministic=bool(opt.get('manual_seed_deterministic')),
+    )
+
     # logging
-    torch.backends.cudnn.enabled = True
-    torch.backends.cudnn.benchmark = True
 
     _log_mode = 'a' if opt['path'].get('_resume_same_exp') else 'w'
     Logger.setup_logger(
@@ -51,13 +55,16 @@ if __name__ == "__main__":
         wandb_logger = None
 
     # dataset
+    ms = opt['manual_seed']
     for phase, dataset_opt in opt['datasets'].items():
         if phase == 'train' and args.phase != 'val':
             train_set = Data.create_dataset(dataset_opt, phase)
-            train_loader = Data.create_dataloader(train_set, dataset_opt, phase)
+            train_loader = Data.create_dataloader(
+                train_set, dataset_opt, phase, manual_seed=ms)
         elif phase == 'val':
             val_set = Data.create_dataset(dataset_opt, phase)
-            val_loader = Data.create_dataloader(val_set, dataset_opt, phase)
+            val_loader = Data.create_dataloader(
+                val_set, dataset_opt, phase, manual_seed=ms)
     logger.info('Initial Dataset Finished')
 
     # model
@@ -105,6 +112,11 @@ if __name__ == "__main__":
                     diffusion.set_new_noise_schedule(opt['model']['beta_schedule']['val'], schedule_phase='val')
                     for _,  val_data in enumerate(val_loader):
                         idx += 1
+                        idx_tensor = val_data['Index']
+                        sample_idx_1based = int(
+                            idx_tensor.detach().cpu().view(-1)[0].item()) + 1
+                        Seed.set_sample_seed(
+                            int(opt['manual_seed']) + sample_idx_1based)
                         diffusion.feed_data(val_data)
                         diffusion.test(continous=False)
                         visuals = diffusion.get_current_visuals()
@@ -159,6 +171,11 @@ if __name__ == "__main__":
         os.makedirs(result_path, exist_ok=True)
         for _,  val_data in enumerate(val_loader):
             idx += 1
+            idx_tensor = val_data['Index']
+            sample_idx_1based = int(
+                idx_tensor.detach().cpu().view(-1)[0].item()) + 1
+            Seed.set_sample_seed(
+                int(opt['manual_seed']) + sample_idx_1based)
             diffusion.feed_data(val_data)
             diffusion.test(continous=True)
             visuals = diffusion.get_current_visuals()

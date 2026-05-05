@@ -31,6 +31,10 @@ def parse(args):
             json_str += line
     opt = json.loads(json_str, object_pairs_hook=OrderedDict)
 
+    # Reproducibility (default seed 42; override in JSON with "manual_seed")
+    opt.setdefault('manual_seed', 42)
+    opt.setdefault('manual_seed_deterministic', False)
+
     # set log directory
     if args.debug:
         opt['name'] = 'debug_{}'.format(opt['name'])
