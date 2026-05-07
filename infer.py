@@ -126,6 +126,9 @@ def run_inference_worker(opt, rank, world_size, wandb_logger=None,
                 '{}/{}_{}_out.png'.format(result_path, current_step, sample_idx_1based))
         Metrics.save_img(
             lr_img, '{}/{}_{}_lr.png'.format(result_path, current_step, sample_idx_1based))
+        Metrics.save_physical_visuals(
+            visuals, result_path,
+            '{}_{}'.format(current_step, sample_idx_1based))
 
         psnr_sum += Metrics.calculate_psnr(
             Metrics.tensor2img(visuals['Out'][-1]), hr_img)

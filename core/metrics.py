@@ -34,8 +34,72 @@ def tensor2img(tensor, out_type=np.uint8, min_max=(-1, 1)):
 
 
 def save_img(img, img_path, mode='RGB'):
+    if img.ndim == 2:
+        cv2.imwrite(img_path, img)
+        return
+    if img.ndim == 3 and img.shape[2] == 1:
+        cv2.imwrite(img_path, np.squeeze(img, axis=2))
+        return
     cv2.imwrite(img_path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
     # cv2.imwrite(img_path, img)
+
+
+def _visual_hw(tensor):
+    if tensor is None or not hasattr(tensor, 'dim'):
+        return None
+    if tensor.dim() >= 2:
+        return int(tensor.shape[-2]), int(tensor.shape[-1])
+    return None
+
+
+def _reference_hw(visuals):
+    for key in ('Out', 'output', 'stage1_output', 'out_I', 'LR', 'HR'):
+        if key in visuals:
+            hw = _visual_hw(visuals[key])
+            if hw is not None:
+                return hw
+    return None
+
+
+def _expand_out_a(tensor, target_hw):
+    if target_hw is None or not hasattr(tensor, 'dim'):
+        return tensor
+
+    target_h, target_w = target_hw
+    if tensor.dim() == 4:
+        h, w = int(tensor.shape[-2]), int(tensor.shape[-1])
+        if (h, w) != target_hw and h in (1, target_h) and w in (1, target_w):
+            return tensor.expand(tensor.shape[0], tensor.shape[1], target_h, target_w).clone()
+    if tensor.dim() == 3:
+        h, w = int(tensor.shape[-2]), int(tensor.shape[-1])
+        if (h, w) != target_hw and h in (1, target_h) and w in (1, target_w):
+            return tensor.expand(tensor.shape[0], target_h, target_w).clone()
+    return tensor
+
+
+def _single_channel_tensor2img(tensor, out_type=np.uint8):
+    tensor = tensor.float().cpu().clamp(0, 1)
+    if tensor.dim() == 4 and tensor.shape[1] == 1:
+        tensor = tensor[0, 0]
+    elif tensor.dim() == 3 and tensor.shape[0] == 1:
+        tensor = tensor[0]
+    return tensor2img(tensor, out_type=out_type, min_max=(0, 1))
+
+
+def save_physical_visuals(visuals, result_path, filename_prefix):
+    target_hw = _reference_hw(visuals)
+    for key in ('out_T', 'out_A', 'out_I', 'stage1_output', 'output'):
+        if key not in visuals or visuals[key] is None:
+            continue
+
+        tensor = visuals[key]
+        if key == 'out_A':
+            tensor = _expand_out_a(tensor, target_hw)
+        if key == 'out_T':
+            img = _single_channel_tensor2img(tensor)
+        else:
+            img = tensor2img(tensor, min_max=(0, 1))
+        save_img(img, os.path.join(result_path, '{}_{}.png'.format(filename_prefix, key)))
 
 
 def calculate_psnr(img1, img2):

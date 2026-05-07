@@ -4,6 +4,7 @@ from collections import OrderedDict
 from copy import deepcopy
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from PIL import Image
 import os
@@ -25,6 +26,15 @@ class DDPM(BaseModel):
         self.set_loss()
         self.set_new_noise_schedule(opt['model']['beta_schedule']['train'], schedule_phase='train')
         self.finetune_netH = opt['model'].get('finetune_netH', False)
+        train_opt = opt.get('train') or {}
+        self.lambda_t = train_opt.get('lambda_t', 0.01)
+        self.lambda_asm = train_opt.get('lambda_asm', 0.05)
+        self.log_dict = OrderedDict()
+        self.current_physical_losses = OrderedDict([
+            ('loss_t', 0.0),
+            ('loss_asm', 0.0),
+            ('loss_physical_total', 0.0),
+        ])
 
         if self.opt['phase'] == 'train':
             self.netG.train()
@@ -74,25 +84,129 @@ class DDPM(BaseModel):
                 for v in self.netH.parameters():
                     v.requires_grad = False
                 self.optG = torch.optim.Adam(optim_params, lr=opt['train']["optimizer"]["lr"])
-            self.log_dict = OrderedDict()
         self.load_network()
         self.print_network()
 
     def feed_data(self, data):
-        self.data = self.set_device(data)
+        if isinstance(data, dict):
+            self.data = {}
+            for key, item in data.items():
+                if item is None:
+                    self.data[key] = None
+                elif torch.is_tensor(item):
+                    self.data[key] = item.to(self.device)
+                elif key in ('depth', 'beta'):
+                    self.data[key] = torch.as_tensor(item).to(self.device)
+                else:
+                    self.data[key] = item
+        else:
+            self.data = self.set_device(data)
+
+    def _has_physical_targets(self):
+        return (
+            hasattr(self, 'data')
+            and isinstance(self.data, dict)
+            and self.data.get('depth') is not None
+            and self.data.get('beta') is not None
+            and hasattr(self, 'out_T')
+            and hasattr(self, 'out_I')
+        )
+
+    def _zero_physical_loss(self):
+        if hasattr(self, 'out_T'):
+            return self.out_T.new_tensor(0.0)
+        return torch.tensor(0.0, device=self.device)
+
+    def _prepare_depth_and_beta(self):
+        depth = self.data['depth'].to(device=self.out_T.device, dtype=self.out_T.dtype)
+        beta = self.data['beta'].to(device=self.out_T.device, dtype=self.out_T.dtype)
+        batch_size = self.out_T.size(0)
+
+        if depth.dim() == 2:
+            depth = depth.unsqueeze(0).unsqueeze(0)
+        elif depth.dim() == 3:
+            if depth.size(0) == batch_size:
+                depth = depth.unsqueeze(1)
+            else:
+                depth = depth.unsqueeze(0)
+        elif depth.dim() != 4:
+            raise ValueError('depth must have shape [B,H,W], [B,1,H,W], or [H,W].')
+
+        if depth.size(0) == 1 and batch_size != 1:
+            depth = depth.expand(batch_size, -1, -1, -1)
+        if depth.size(0) != batch_size:
+            raise ValueError('depth batch size must match out_T batch size.')
+
+        if beta.numel() == 1:
+            beta = beta.reshape(1, 1, 1, 1).expand(batch_size, 1, 1, 1)
+        else:
+            beta = beta.reshape(batch_size, 1, 1, 1)
+
+        if depth.shape[-2:] != self.out_T.shape[-2:]:
+            depth = F.interpolate(
+                depth, size=self.out_T.shape[-2:], mode='bilinear', align_corners=False)
+        return depth, beta
+
+    def _compute_physical_losses(self, hazy_input_01=None):
+        if not self._has_physical_targets():
+            zero_loss = self._zero_physical_loss()
+            return zero_loss, zero_loss
+
+        depth, beta = self._prepare_depth_and_beta()
+        t_gt = torch.exp(-beta * depth)
+        out_T = torch.clamp(self.out_T, min=1e-4, max=1.0)
+        t_gt = torch.clamp(t_gt, min=1e-4, max=1.0)
+        loss_t = F.l1_loss(out_T, t_gt)
+
+        if hazy_input_01 is None:
+            hazy_input_01 = (self.data['SR'] + 1.0) / 2.0
+        hazy_input_01 = hazy_input_01.to(device=self.out_I.device, dtype=self.out_I.dtype)
+        if hazy_input_01.shape[-2:] != self.out_I.shape[-2:]:
+            hazy_input_01 = F.interpolate(
+                hazy_input_01, size=self.out_I.shape[-2:], mode='bilinear', align_corners=False)
+        loss_asm = F.l1_loss(self.out_I, hazy_input_01)
+        return loss_t, loss_asm
+
+    @torch.no_grad()
+    def compute_current_physical_losses(self):
+        loss_t, loss_asm = self._compute_physical_losses()
+        loss_physical_total = self.lambda_t * loss_t + self.lambda_asm * loss_asm
+        return OrderedDict([
+            ('loss_t', loss_t.item()),
+            ('loss_asm', loss_asm.item()),
+            ('loss_physical_total', loss_physical_total.item()),
+        ])
+
+    @torch.no_grad()
+    def update_physical_log(self):
+        self.current_physical_losses = self.compute_current_physical_losses()
+        for key, value in self.current_physical_losses.items():
+            self.log_dict[key] = value
+        return self.current_physical_losses
 
     def optimize_parameters(self):
         self.optG.zero_grad()
-        self.output, self.stage1_output, self.out_T, self.out_A, self.out_I = self.netH((self.data['SR'] + 1.0) / 2.0)
+        hazy_input_01 = (self.data['SR'] + 1.0) / 2.0
+        self.output, self.stage1_output, self.out_T, self.out_A, self.out_I = self.netH(hazy_input_01)
         condition = torch.cat([self.output / 0.5 - 1, self.out_T / 0.5 - 1], dim=1)
         l_pix = self.netG(self.data['HR'], condition)
         # need to average in multi-gpu
         b, c, h, w = self.data['HR'].shape
         l_pix = l_pix.sum()/int(b*c*h*w)
-        l_pix.backward()
+
+        loss_t = l_pix.new_tensor(0.0)
+        loss_asm = l_pix.new_tensor(0.0)
+        if self.finetune_netH and self._has_physical_targets():
+            loss_t, loss_asm = self._compute_physical_losses(hazy_input_01=hazy_input_01)
+        total_loss = l_pix + self.lambda_t * loss_t + self.lambda_asm * loss_asm
+
+        total_loss.backward()
         self.optG.step()
         # set log
         self.log_dict['l_pix'] = l_pix.item()
+        self.log_dict['loss_t'] = loss_t.item()
+        self.log_dict['loss_asm'] = loss_asm.item()
+        self.log_dict['loss_total'] = total_loss.item()
 
     def test(self, continous=False):
         self.netG.eval()
@@ -104,6 +218,7 @@ class DDPM(BaseModel):
                 self.SR = self.netG.module.super_resolution(condition)
             else:
                 self.SR = self.netG.super_resolution(condition)
+            self.update_physical_log()
 
         self.netG.train()
         self.netH.train()
@@ -142,6 +257,16 @@ class DDPM(BaseModel):
             out_dict['Out'] = torch.clamp((self.SR + 1.0) / 2.0, min=0.0, max=1.0).detach().float().cpu()
             out_dict['LR'] = torch.clamp((self.data['SR'] + 1.0) / 2.0, min=0.0, max=1.0).detach().float().cpu()
             out_dict['HR'] = torch.clamp((self.data['HR'] + 1.0) / 2.0, min=0.0, max=1.0).detach().float().cpu()
+            if hasattr(self, 'out_T'):
+                out_dict['out_T'] = torch.clamp(self.out_T, min=0.0, max=1.0).detach().float().cpu()
+            if hasattr(self, 'out_A'):
+                out_dict['out_A'] = torch.clamp(self.out_A, min=0.0, max=1.0).detach().float().cpu()
+            if hasattr(self, 'out_I'):
+                out_dict['out_I'] = torch.clamp(self.out_I, min=0.0, max=1.0).detach().float().cpu()
+            if hasattr(self, 'stage1_output'):
+                out_dict['stage1_output'] = torch.clamp(self.stage1_output, min=0.0, max=1.0).detach().float().cpu()
+            if hasattr(self, 'output'):
+                out_dict['output'] = torch.clamp(self.output, min=0.0, max=1.0).detach().float().cpu()
         return out_dict
 
     def print_network(self):

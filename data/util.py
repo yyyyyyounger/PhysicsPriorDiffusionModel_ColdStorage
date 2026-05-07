@@ -1,4 +1,6 @@
 import os
+import csv
+import json
 import torch
 import torchvision
 import random
@@ -21,6 +23,141 @@ def get_paths_from_images(path):
                 images.append(img_path)
     assert images, '{:s} has no valid image file'.format(path)
     return sorted(images)
+
+
+def _clean_record(record):
+    return {
+        str(key).strip(): value.strip() if isinstance(value, str) else value
+        for key, value in record.items()
+    }
+
+
+def _metadata_source(metadata_csv=None, metadata_jsonl=None, finetune_root=None):
+    if metadata_csv:
+        return metadata_csv, 'csv'
+    if metadata_jsonl:
+        return metadata_jsonl, 'jsonl'
+    if finetune_root:
+        csv_path = os.path.join(finetune_root, 'metadata.csv')
+        if os.path.isfile(csv_path):
+            return csv_path, 'csv'
+        jsonl_path = os.path.join(finetune_root, 'metadata.jsonl')
+        if os.path.isfile(jsonl_path):
+            return jsonl_path, 'jsonl'
+    return None, None
+
+
+def _resolve_metadata_path(path, base_dir):
+    if path is None or path == '':
+        return None
+    path = str(path)
+    if os.path.isabs(path):
+        return path
+    return os.path.normpath(os.path.join(base_dir, path))
+
+
+def _split_matches(record_split, split):
+    if record_split is None or record_split == '':
+        return True
+    if split is None:
+        return True
+    aliases = {
+        'train': {'train', 'training'},
+        'val': {'val', 'valid', 'validation'},
+        'test': {'test', 'testing'},
+    }
+    record_split = str(record_split).strip().lower()
+    split = str(split).strip().lower()
+    return record_split in aliases.get(split, {split})
+
+
+def _read_metadata_records(metadata_path, metadata_type):
+    records = []
+    if metadata_type == 'csv':
+        with open(metadata_path, newline='') as f:
+            reader = csv.DictReader(f)
+            records = [_clean_record(row) for row in reader]
+    elif metadata_type == 'jsonl':
+        with open(metadata_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(_clean_record(json.loads(line)))
+    else:
+        raise ValueError('Unsupported metadata type: {}'.format(metadata_type))
+    return records
+
+
+def paired_paths_from_metadata(metadata_csv=None, metadata_jsonl=None, finetune_root=None, split=None):
+    metadata_path, metadata_type = _metadata_source(
+        metadata_csv=metadata_csv,
+        metadata_jsonl=metadata_jsonl,
+        finetune_root=finetune_root)
+    if metadata_path is None:
+        return None
+
+    metadata_path = os.path.abspath(metadata_path)
+    base_dir = os.path.abspath(finetune_root) if finetune_root else os.path.dirname(metadata_path)
+    records = _read_metadata_records(metadata_path, metadata_type)
+    paths = []
+    for row_idx, record in enumerate(records):
+        if not _split_matches(record.get('split'), split):
+            continue
+        hazy_path = record.get('hazy')
+        gt_path = record.get('gt') or record.get('clear')
+        if not hazy_path or not gt_path:
+            raise ValueError(
+                'metadata row {} must contain hazy and gt paths'.format(row_idx))
+        beta = record.get('beta', 0.0)
+        if beta in (None, ''):
+            beta = 0.0
+        paths.append({
+            'lq_path': _resolve_metadata_path(hazy_path, base_dir),
+            'gt_path': _resolve_metadata_path(gt_path, base_dir),
+            'depth_path': _resolve_metadata_path(record.get('depth'), base_dir),
+            'beta': float(beta),
+        })
+
+    if not paths:
+        raise ValueError(
+            'metadata {} has no samples for split {}'.format(metadata_path, split))
+    return paths
+
+
+def clean_depth(depth):
+    depth = np.asarray(depth, dtype=np.float32)
+    depth = np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
+    depth[depth < 0] = 0.0
+    return depth
+
+
+def depth2tensor(depth):
+    depth = clean_depth(depth)
+    if depth.ndim == 2:
+        depth = depth[None, :, :]
+    elif depth.ndim == 3:
+        if depth.shape[0] == 1:
+            pass
+        elif depth.shape[-1] == 1:
+            depth = np.transpose(depth, (2, 0, 1))
+        else:
+            depth = depth[:1, :, :]
+    else:
+        raise ValueError('depth array must be 2D or 3D, got shape {}'.format(depth.shape))
+    return torch.from_numpy(np.ascontiguousarray(depth)).float()
+
+
+def load_depth_npy(path):
+    return depth2tensor(np.load(path))
+
+
+def resize_depth(depth, img_size):
+    if not torch.is_tensor(depth):
+        depth = depth2tensor(depth)
+    depth = depth.float().unsqueeze(0)
+    depth = torch.nn.functional.interpolate(
+        depth, size=img_size, mode='bilinear', align_corners=False)
+    return depth.squeeze(0)
 
 
 def augment(img_list, hflip=True, rot=True, split='val'):
@@ -108,15 +245,22 @@ def paired_random_crop(img_gts, img_lqs, gt_patch_size):
 totensor = torchvision.transforms.ToTensor()
 hflip = torchvision.transforms.RandomHorizontalFlip()
 resize = transforms.RandomResizedCrop(512,scale=(0.5,1.0))
-def transform_augment(img_list, split='val', img_size=(512, 512), min_max=(0, 1)):
+def transform_augment(img_list, split='val', img_size=(512, 512), min_max=(0, 1), depth_list=None):
     Resize = transforms.Resize(img_size)
     img_list = [Resize(img) for img in img_list]
     imgs = [totensor(img) for img in img_list]
+    depths = None
+    if depth_list is not None:
+        depths = [resize_depth(depth, img_size) for depth in depth_list]
     if split == 'train':
-        imgs = torch.stack(imgs, 0)
-        imgs = hflip(imgs)
-        imgs = torch.unbind(imgs, dim=0)
+        do_hflip = random.random() < 0.5
+        if do_hflip:
+            imgs = [torch.flip(img, dims=[2]) for img in imgs]
+            if depths is not None:
+                depths = [torch.flip(depth, dims=[2]) for depth in depths]
     ret_img = [img * (min_max[1] - min_max[0]) + min_max[0] for img in imgs]
+    if depth_list is not None:
+        return ret_img, depths
     return ret_img
 
 # totensor = torchvision.transforms.ToTensor()

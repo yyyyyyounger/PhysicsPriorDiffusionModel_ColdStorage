@@ -16,7 +16,18 @@ import cv2
 from os import path as osp
 
 class LRHRDataset(Dataset):
-    def __init__(self, datarootlq, dataroothq, datatype, split='train', data_len=-1, img_sizeH=256, img_sizeW=256):
+    def __init__(
+            self,
+            datarootlq,
+            dataroothq,
+            datatype,
+            split='train',
+            data_len=-1,
+            img_sizeH=256,
+            img_sizeW=256,
+            metadata_csv=None,
+            metadata_jsonl=None,
+            finetune_root=None):
         self.datatype = datatype
         self.data_len = data_len
         self.split = split
@@ -26,7 +37,13 @@ class LRHRDataset(Dataset):
         if datatype == 'img':
             # self.sr_path = Util.get_paths_from_images(datarootlq)
             # self.hr_path = Util.get_paths_from_images(dataroothq)
-            self.paths = self.paired_paths_from_folder([datarootlq, dataroothq], ['lq', 'gt'])
+            self.paths = Util.paired_paths_from_metadata(
+                metadata_csv=metadata_csv,
+                metadata_jsonl=metadata_jsonl,
+                finetune_root=finetune_root,
+                split=split)
+            if self.paths is None:
+                self.paths = self.paired_paths_from_folder([datarootlq, dataroothq], ['lq', 'gt'])
             self.dataset_len = len(self.paths)
             if self.data_len <= 0:
                 self.data_len = self.dataset_len
@@ -120,14 +137,32 @@ class LRHRDataset(Dataset):
 
 
     def __getitem__(self, index):
-        img_HR = Image.open(self.paths[index]['gt_path']).convert("RGB")
-        img_SR = Image.open(self.paths[index]['lq_path']).convert("RGB")
+        sample = self.paths[index]
+        img_HR = Image.open(sample['gt_path']).convert("RGB")
+        img_SR = Image.open(sample['lq_path']).convert("RGB")
         #patch_size = (img_SR.size[1]//16*16, img_SR.size[0]//16*16)
         #if img_SR.size[0] > 1024 and img_SR.size[1] > 1024:
         #    patch_size = (1024, 1024)
         patch_size = (self.img_sizeH, self.img_sizeW)
 
-        [img_SR, img_HR] = Util.transform_augment([img_SR, img_HR], split=self.split, img_size=patch_size, min_max=(-1, 1))
-        return {'HR': img_HR, 'SR': img_SR, 'Index': index}
-        
-        
+        depth_path = sample.get('depth_path')
+        if depth_path:
+            depth = Util.load_depth_npy(depth_path)
+            [img_SR, img_HR], [depth] = Util.transform_augment(
+                [img_SR, img_HR],
+                split=self.split,
+                img_size=patch_size,
+                min_max=(-1, 1),
+                depth_list=[depth])
+        else:
+            [img_SR, img_HR] = Util.transform_augment(
+                [img_SR, img_HR],
+                split=self.split,
+                img_size=patch_size,
+                min_max=(-1, 1))
+
+        data = {'HR': img_HR, 'SR': img_SR, 'Index': index}
+        if depth_path:
+            data['depth'] = depth
+            data['beta'] = torch.tensor(sample.get('beta', 0.0), dtype=torch.float32)
+        return data

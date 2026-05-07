@@ -57,13 +57,16 @@ def create_dataloader(dataset, dataset_opt, phase, manual_seed=None):
 def create_dataset(dataset_opt, phase):
     '''create dataset'''
     from data.LRHR_dataset import LRHRDataset as D
-    dataset = D(datarootlq=dataset_opt['datarootlq'],
-                dataroothq=dataset_opt['dataroothq'],
+    dataset = D(datarootlq=dataset_opt.get('datarootlq'),
+                dataroothq=dataset_opt.get('dataroothq'),
                 datatype=dataset_opt['datatype'],
                 split=phase,
-                data_len=dataset_opt['len'],
-                img_sizeH=dataset_opt['img_sizeH'],
-                img_sizeW=dataset_opt['img_sizeW']
+                data_len=dataset_opt.get('len', -1),
+                img_sizeH=dataset_opt.get('img_sizeH', 256),
+                img_sizeW=dataset_opt.get('img_sizeW', 256),
+                metadata_csv=dataset_opt.get('metadata_csv'),
+                metadata_jsonl=dataset_opt.get('metadata_jsonl'),
+                finetune_root=dataset_opt.get('finetune_root')
                 )
     logger = logging.getLogger('base')
     logger.info('Dataset [{:s} - {:s}] is created.'.format(dataset.__class__.__name__, dataset_opt['name']))

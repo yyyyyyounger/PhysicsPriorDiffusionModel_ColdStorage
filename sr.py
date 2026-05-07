@@ -105,6 +105,9 @@ if __name__ == "__main__":
                 # validation
                 if current_step % opt['train']['val_freq'] == 0:
                     avg_psnr = 0.0
+                    avg_loss_t = 0.0
+                    avg_loss_asm = 0.0
+                    avg_loss_physical_total = 0.0
                     idx = 0
                     result_path = '{}/{}'.format(opt['path']['results'], current_epoch)
                     os.makedirs(result_path, exist_ok=True)
@@ -119,6 +122,10 @@ if __name__ == "__main__":
                             int(opt['manual_seed']) + sample_idx_1based)
                         diffusion.feed_data(val_data)
                         diffusion.test(continous=False)
+                        physical_losses = diffusion.current_physical_losses
+                        avg_loss_t += float(physical_losses.get('loss_t', 0.0))
+                        avg_loss_asm += float(physical_losses.get('loss_asm', 0.0))
+                        avg_loss_physical_total += float(physical_losses.get('loss_physical_total', 0.0))
                         visuals = diffusion.get_current_visuals()
                         out_img = Metrics.tensor2img(visuals['Out'])  # uint8
                         hr_img = Metrics.tensor2img(visuals['HR'])  # uint8
@@ -128,6 +135,8 @@ if __name__ == "__main__":
                         Metrics.save_img(hr_img, '{}/{}_{}_hr.png'.format(result_path, current_step, idx))
                         Metrics.save_img(out_img, '{}/{}_{}_out.png'.format(result_path, current_step, idx))
                         Metrics.save_img(lr_img, '{}/{}_{}_lr.png'.format(result_path, current_step, idx))
+                        Metrics.save_physical_visuals(
+                            visuals, result_path, '{}_{}'.format(current_step, idx))
                         tb_logger.add_image('Iter_{}'.format(current_step), np.transpose(np.concatenate((lr_img, out_img, hr_img), axis=1), [2, 0, 1]), idx)
                         avg_psnr += Metrics.calculate_psnr(out_img, hr_img)
 
@@ -135,17 +144,30 @@ if __name__ == "__main__":
                             wandb_logger.log_image(f'validation_{idx}', np.concatenate((lr_img, out_img, hr_img), axis=1))
 
                     avg_psnr = avg_psnr / idx
+                    avg_loss_t = avg_loss_t / idx
+                    avg_loss_asm = avg_loss_asm / idx
+                    avg_loss_physical_total = avg_loss_physical_total / idx
                     diffusion.set_new_noise_schedule(opt['model']['beta_schedule']['train'], schedule_phase='train')
                     # log
-                    logger.info('# Validation # PSNR: {:.4e}'.format(avg_psnr))
+                    logger.info('# Validation # PSNR: {:.4e}, loss_t: {:.4e}, loss_asm: {:.4e}'.format(
+                        avg_psnr, avg_loss_t, avg_loss_asm))
                     logger_val = logging.getLogger('val')  # validation logger
-                    logger_val.info('<epoch:{:3d}, iter:{:8,d}> psnr: {:.4e}'.format(current_epoch, current_step, avg_psnr))
+                    logger_val.info(
+                        '<epoch:{:3d}, iter:{:8,d}> psnr: {:.4e}, loss_t: {:.4e}, loss_asm: {:.4e}, loss_physical_total: {:.4e}'.format(
+                            current_epoch, current_step, avg_psnr, avg_loss_t,
+                            avg_loss_asm, avg_loss_physical_total))
                     # tensorboard logger
                     tb_logger.add_scalar('psnr', avg_psnr, current_step)
+                    tb_logger.add_scalar('val_loss_t', avg_loss_t, current_step)
+                    tb_logger.add_scalar('val_loss_asm', avg_loss_asm, current_step)
+                    tb_logger.add_scalar('val_loss_physical_total', avg_loss_physical_total, current_step)
 
                     if wandb_logger:
                         wandb_logger.log_metrics({
                             'validation/val_psnr': avg_psnr,
+                            'validation/loss_t': avg_loss_t,
+                            'validation/loss_asm': avg_loss_asm,
+                            'validation/loss_physical_total': avg_loss_physical_total,
                             'validation/val_step': val_step
                         })
                         val_step += 1
@@ -166,6 +188,9 @@ if __name__ == "__main__":
         logger.info('Begin Model Evaluation.')
         avg_psnr = 0.0
         avg_ssim = 0.0
+        avg_loss_t = 0.0
+        avg_loss_asm = 0.0
+        avg_loss_physical_total = 0.0
         idx = 0
         result_path = '{}'.format(opt['path']['results'])
         os.makedirs(result_path, exist_ok=True)
@@ -178,6 +203,10 @@ if __name__ == "__main__":
                 int(opt['manual_seed']) + sample_idx_1based)
             diffusion.feed_data(val_data)
             diffusion.test(continous=True)
+            physical_losses = diffusion.current_physical_losses
+            avg_loss_t += float(physical_losses.get('loss_t', 0.0))
+            avg_loss_asm += float(physical_losses.get('loss_asm', 0.0))
+            avg_loss_physical_total += float(physical_losses.get('loss_physical_total', 0.0))
             visuals = diffusion.get_current_visuals()
 
             hr_img = Metrics.tensor2img(visuals['HR'])  # uint8
@@ -198,6 +227,8 @@ if __name__ == "__main__":
 
             Metrics.save_img(hr_img, '{}/{}_{}_hr.png'.format(result_path, current_step, idx))
             Metrics.save_img(fake_img, '{}/{}_{}_inf.png'.format(result_path, current_step, idx))
+            Metrics.save_physical_visuals(
+                visuals, result_path, '{}_{}'.format(current_step, idx))
 
             # generation
             eval_psnr = Metrics.calculate_psnr(Metrics.tensor2img(visuals['SR'][-1]), hr_img)
@@ -211,17 +242,27 @@ if __name__ == "__main__":
 
         avg_psnr = avg_psnr / idx
         avg_ssim = avg_ssim / idx
+        avg_loss_t = avg_loss_t / idx
+        avg_loss_asm = avg_loss_asm / idx
+        avg_loss_physical_total = avg_loss_physical_total / idx
 
         # log
         logger.info('# Validation # PSNR: {:.4e}'.format(avg_psnr))
         logger.info('# Validation # SSIM: {:.4e}'.format(avg_ssim))
+        logger.info('# Validation # loss_t: {:.4e}, loss_asm: {:.4e}'.format(avg_loss_t, avg_loss_asm))
         logger_val = logging.getLogger('val')  # validation logger
-        logger_val.info('<epoch:{:3d}, iter:{:8,d}> psnr: {:.4e}, ssim：{:.4e}'.format(current_epoch, current_step, avg_psnr, avg_ssim))
+        logger_val.info(
+            '<epoch:{:3d}, iter:{:8,d}> psnr: {:.4e}, ssim：{:.4e}, loss_t: {:.4e}, loss_asm: {:.4e}, loss_physical_total: {:.4e}'.format(
+                current_epoch, current_step, avg_psnr, avg_ssim,
+                avg_loss_t, avg_loss_asm, avg_loss_physical_total))
 
         if wandb_logger:
             if opt['log_eval']:
                 wandb_logger.log_eval_table()
             wandb_logger.log_metrics({
                 'PSNR': float(avg_psnr),
-                'SSIM': float(avg_ssim)
+                'SSIM': float(avg_ssim),
+                'loss_t': float(avg_loss_t),
+                'loss_asm': float(avg_loss_asm),
+                'loss_physical_total': float(avg_loss_physical_total)
             })
