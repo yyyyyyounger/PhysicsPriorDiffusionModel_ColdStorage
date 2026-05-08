@@ -198,7 +198,8 @@ class DDPM(BaseModel):
         loss_asm = l_pix.new_tensor(0.0)
         if self.finetune_netH and self._has_physical_targets():
             loss_t, loss_asm = self._compute_physical_losses(hazy_input_01=hazy_input_01)
-        total_loss = l_pix + self.lambda_t * loss_t + self.lambda_asm * loss_asm
+        loss_physical_total = self.lambda_t * loss_t + self.lambda_asm * loss_asm
+        total_loss = l_pix + loss_physical_total
 
         total_loss.backward()
         self.optG.step()
@@ -206,6 +207,7 @@ class DDPM(BaseModel):
         self.log_dict['l_pix'] = l_pix.item()
         self.log_dict['loss_t'] = loss_t.item()
         self.log_dict['loss_asm'] = loss_asm.item()
+        self.log_dict['loss_physical_total'] = loss_physical_total.item()
         self.log_dict['loss_total'] = total_loss.item()
 
     def test(self, continous=False):
