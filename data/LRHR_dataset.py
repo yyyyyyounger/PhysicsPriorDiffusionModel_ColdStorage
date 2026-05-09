@@ -1,5 +1,4 @@
 from io import BytesIO
-import lmdb
 import torch
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
