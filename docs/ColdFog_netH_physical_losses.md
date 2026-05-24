@@ -30,7 +30,30 @@ condition = torch.cat([output / 0.5 - 1, out_T / 0.5 - 1], dim=1)
 
 也就是 3 通道 `out_J` 加 1 通道 `out_T`，共 4 通道。UNet 配置 `in_channel=7`，對應 `condition` 4 通道加 noisy HR 3 通道。
 
-## 2. 日誌中各 loss 快速對照
+## 2. results 圖片文件後綴對照
+
+`trainColdFogNetHPhysical.sh` 訓練時每次 validation 會在實驗目錄的 `results/` 下保存圖片。文件名前兩段通常是：
+
+```text
+{current_step}_{sample_idx}_{suffix}.png
+```
+
+以 `25000_73_out_T.png` 為例，`25000` 是當前訓練 step，`73` 是 validation 樣本序號，`out_T` 是保存內容。
+
+| 後綴 | 圖片內容 | 數值/顯示方式 | 來源 | 主要用途 |
+| --- | --- | --- | --- | --- |
+| `_hr.png` | GT 清晰圖 | `HR` 從 `[-1, 1]` 轉回 `[0, 1]` 後存成 RGB | `sr.py` 保存 `visuals['HR']` | 作為最終去霧結果的參考真值 |
+| `_lr.png` | 輸入 hazy / fog 圖 | `SR` 從 `[-1, 1]` 轉回 `[0, 1]` 後存成 RGB；這裡命名沿用超分代碼的 `LR`，在去霧任務中實際是霧圖輸入 | `sr.py` 保存 `visuals['LR']` | 觀察模型輸入霧圖 |
+| `_out.png` | diffusion 最終生成的去霧結果 | `self.SR` 從 `[-1, 1]` 轉回 `[0, 1]` 後存成 RGB | `sr.py` 保存 `visuals['Out']` | 最終輸出，用於 PSNR/SSIM 和主觀對比 |
+| `_output.png` | `netH` 預測的清晰圖 / 去霧估計 `out_J` | 已 clamp 到 `[0, 1]`，存成 RGB | `MPRfusion.forward()` 返回 `out_J`，`save_physical_visuals()` 保存 `visuals['output']` | diffusion 的條件圖之一；可看 `netH` 自身去霧能力 |
+| `_stage1_output.png` | `netH` 第一階段中間去霧圖 | 已 clamp 到 `[0, 1]`，存成 RGB | `MPRfusion.forward()` 返回 `stage1_output` | 觀察 `netH` 第一階段輸出與最終 `out_J` 的差異 |
+| `_out_T.png` | `netH` 預測的 transmission / 傳輸圖 | 單通道灰度圖，已 clamp 到 `[0, 1]`；越亮表示 `T` 越大、霧越少/透過率越高，越暗表示霧更重 | `conv_T_1 + conv_T_2`，`save_physical_visuals()` 以單通道方式保存 | 對應 `loss_t` 的預測項，可和 `exp(-beta * depth)` 理解對照 |
+| `_out_A.png` | `netH` 預測的大氣光 / atmospheric light 圖 | 已 clamp 到 `[0, 1]`；若 `ANet` 輸出是較小空間尺寸或近似全局值，保存時會 expand 到參考圖尺寸，所以可能看起來像大面積純白/純色 | `ANet(hazy)`，`save_physical_visuals()` 保存 `visuals['out_A']` | 大氣散射模型中的 `A`，目前沒有直接 GT loss，主要由 `loss_asm` 間接約束 |
+| `_out_I.png` | 由物理模型重建出的 hazy 圖 | 已 clamp 到 `[0, 1]`，存成 RGB | `out_T * out_J + (1 - out_T) * out_A` | 對應 `loss_asm` 的預測項，應接近輸入 `_lr.png` |
+
+簡單理解：`_out.png` 是 diffusion 的最終結果；`_output/_stage1_output/_out_T/_out_A/_out_I` 是 `netH` 和物理約束相關的中間可視化。若只做效果對比，通常看 `_lr.png`、`_out.png`、`_hr.png`；若分析 physical loss，重點看 `_out_T.png`、`_out_A.png`、`_out_I.png`、`_output.png`。
+
+## 3. 日誌中各 loss 快速對照
 
 `train.log` 中訓練行目前會出現：
 
@@ -48,15 +71,15 @@ l_pix loss_t loss_asm loss_physical_total loss_total
 
 注意：`loss_t` 本身是未乘權重的原始 L1；真正加進總 loss 的是 `0.01 * loss_t`。`loss_asm` 同理，真正加進總 loss 的是 `0.05 * loss_asm`。
 
-## 3. `l_pix`: diffusion 訓練 loss
+## 4. `l_pix`: diffusion 訓練 loss
 
-### 3.1 來源文件
+### 4.1 來源文件
 
 - `model/model.py`: `DDPM.optimize_parameters()`
 - `model/networks.py`: `define_G()`
 - `model/sr3_modules/diffusion.py`: `GaussianDiffusion.p_losses()`
 
-### 3.2 計算流程
+### 4.2 計算流程
 
 `model/networks.py` 中建立 `netG` 時固定使用：
 
@@ -117,19 +140,19 @@ loss_diffusion_raw = loss_noise + 0.01 * loss_frequency
 l_pix = loss_diffusion_raw / (B * C * H * W)
 ```
 
-### 3.3 解讀
+### 4.3 解讀
 
 雖然名稱叫 `l_pix`，但它不是簡單的「輸出去霧圖 vs GT 清晰圖」像素 L1。它實際上是 diffusion 的噪聲預測 L1，加上一個基於 FFT 幅值的頻域重建約束，再除以 batch 內像素總數。
 
-## 4. `loss_t`: 傳輸圖物理監督
+## 5. `loss_t`: 傳輸圖物理監督
 
-### 4.1 來源文件
+### 5.1 來源文件
 
 - `model/model.py`: `_compute_physical_losses()`
 - `data/LRHR_dataset.py`: `__getitem__()`
 - `data/util.py`: `paired_paths_from_metadata()`, `load_depth_npy()`
 
-### 4.2 對比項
+### 5.2 對比項
 
 `loss_t` 比較的是：
 
@@ -157,7 +180,7 @@ loss_t = F.l1_loss(clamp(out_T, 1e-4, 1.0), clamp(t_gt, 1e-4, 1.0))
 
 `F.l1_loss` 默認 `reduction="mean"`，所以這裡是平均 L1，而不是 sum。
 
-### 4.3 解讀
+### 5.3 解讀
 
 `loss_t` 是 transmission map 的物理先驗監督。它不直接比較最終去霧輸出和 GT 清晰圖，而是在約束 `netH` 預測的傳輸圖要接近 Beer-Lambert / 大氣散射模型中的：
 
@@ -171,14 +194,14 @@ t(x) = exp(-beta * depth(x))
 0.01 * loss_t
 ```
 
-## 5. `loss_asm`: 大氣散射模型重建 loss
+## 6. `loss_asm`: 大氣散射模型重建 loss
 
-### 5.1 來源文件
+### 6.1 來源文件
 
 - `model/networkHelper.py`: `MPRfusion.forward()`
 - `model/model.py`: `_compute_physical_losses()`
 
-### 5.2 對比項
+### 6.2 對比項
 
 `netH` 先按大氣散射模型合成 hazy 圖：
 
@@ -207,7 +230,7 @@ loss_asm = F.l1_loss(out_I, hazy_input_01)
 
 同樣是默認 `reduction="mean"`。
 
-### 5.3 解讀
+### 6.3 解讀
 
 `loss_asm` 約束 `netH` 的三個物理輸出 `out_J / out_T / out_A` 能夠重新合成原始 hazy 輸入。它是自一致性約束，不需要額外的大氣光 GT。
 
@@ -219,9 +242,9 @@ loss_asm = F.l1_loss(out_I, hazy_input_01)
 0.05 * loss_asm
 ```
 
-## 6. `loss_physical_total` 和 `loss_total`
+## 7. `loss_physical_total` 和 `loss_total`
 
-### 6.1 當前權重
+### 7.1 當前權重
 
 配置文件：
 
@@ -252,7 +275,7 @@ l_pix: 5.2307e-01 loss_t: 1.3905e-01 loss_asm: 7.7069e-02 loss_physical_total: 5
 
 與日誌中的 `loss_physical_total`、`loss_total` 一致。
 
-### 6.2 物理 loss 何時為 0
+### 7.2 物理 loss 何時為 0
 
 訓練時只有同時滿足以下條件才加入物理 loss：
 
@@ -264,7 +287,7 @@ l_pix: 5.2307e-01 loss_t: 1.3905e-01 loss_asm: 7.7069e-02 loss_physical_total: 5
 
 如果不滿足，`loss_t` 和 `loss_asm` 都會是 0。
 
-## 7. metadata 與物理參數來源
+## 8. metadata 與物理參數來源
 
 當前配置指定：
 
@@ -285,7 +308,7 @@ dataset 會優先從 metadata 讀：
 
 如果 metadata 不存在，代碼才會回退到資料夾配對。但當前 physical 配置有 metadata，因此 `loss_t` 的 `depth/beta` 來源就是 metadata。
 
-## 8. 驗證階段的 loss
+## 9. 驗證階段的 loss
 
 訓練過程中每 `val_freq=5000` step 會進行 validation。驗證時：
 
@@ -297,7 +320,7 @@ dataset 會優先從 metadata 讀：
 
 驗證日誌中的 `loss_t/loss_asm/loss_physical_total` 是物理 loss 的驗證集平均值，不含 `l_pix`，因為 validation 主要在跑生成和 PSNR，不重新做 diffusion training loss。
 
-## 9. 給其他 AI 分析時的重點提示
+## 10. 給其他 AI 分析時的重點提示
 
 1. `l_pix` 名稱容易誤導：它不是最終輸出圖和 GT 的普通像素 loss，而是 diffusion 訓練 loss。
 2. `loss_t` 是 transmission map 監督：`out_T` 對 `exp(-beta * depth)`。
@@ -307,7 +330,7 @@ dataset 會優先從 metadata 讀：
 6. `loss_total` 中 diffusion loss 仍然占主導，物理 loss 主要是輔助約束 `netH` 的物理中間量。
 7. validation 的物理 loss 是在推理/採樣後重新計算的物理一致性指標，不等同於訓練 step 的 `loss_total`。
 
-## 10. 主要代碼位置
+## 11. 主要代碼位置
 
 | 文件 | 內容 |
 | --- | --- |
@@ -319,4 +342,3 @@ dataset 會優先從 metadata 讀：
 | `model/networkHelper.py` | `MPRfusion` 輸出 `out_J/out_T/out_A/out_I` |
 | `data/LRHR_dataset.py` | batch 中 `HR/SR/depth/beta` 的組裝 |
 | `data/util.py` | metadata 讀取、depth 載入與 resize |
-

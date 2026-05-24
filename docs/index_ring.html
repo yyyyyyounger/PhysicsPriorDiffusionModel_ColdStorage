@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ColdFog netH Physical — Training Loss Flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ==========================================================================
+   LERIAN STANDARD FOUNDATION
+   All visual-explainer outputs MUST start from these tokens and base styles.
+   ========================================================================== */
+
+/* ========== DESIGN TOKENS: LIGHT MODE ========== */
+
+:root {
+  /* --- Fonts --- */
+  --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', ui-monospace, monospace;
+
+  /* --- Backgrounds --- */
+  --bg: #F4F4F5;                          /* page background (zinc-100) */
+  --surface: #FFFFFF;                      /* cards, panels */
+  --surface-elevated: #FFFFFF;             /* modals, popovers */
+  --surface-muted: #E4E4E7;               /* subtle backgrounds, muted areas */
+
+  /* --- Text --- */
+  --text: #27272A;                         /* primary text (zinc-800) */
+  --text-secondary: #52525B;               /* secondary text (zinc-600) */
+  --text-muted: #A1A1AA;                   /* placeholder, meta (zinc-400) */
+  --text-inverse: #F4F4F5;                 /* text on dark backgrounds */
+
+  /* --- Brand Accent (Sunglow) --- */
+  --accent: #FDCB28;                       /* primary brand yellow */
+  --accent-dim: rgba(253, 203, 40, 0.15);
+  --accent-hover: rgba(253, 203, 40, 0.7);
+  --accent-text: #27272A;                  /* text color on accent bg */
+
+  /* --- Semantic Status --- */
+  --success: #16A34A;
+  --success-bg: #f0fdf4;
+  --success-dim: rgba(22, 163, 74, 0.12);
+  --warning: #EAB308;
+  --warning-bg: #fefce8;
+  --warning-dim: rgba(234, 179, 8, 0.15);
+  --error: #EF4444;
+  --error-bg: #fef2f2;
+  --error-dim: rgba(239, 68, 68, 0.12);
+  --info: #2563EB;
+  --info-bg: #eff6ff;
+  --info-dim: rgba(37, 99, 235, 0.12);
+
+  /* --- Extended Palette (diagram variety) --- */
+  --sunglow-400: #FDCB28;
+  --sunglow-500: #EDAC05;
+  --sunglow-100: #FFF8C2;
+  --de-york-400: #5BCD86;
+  --de-york-600: #26934F;
+  --de-york-100: #E0F8E8;
+  --tangerine-400: #FAA589;
+  --tangerine-500: #F06E43;
+  --tangerine-100: #FEE9E2;
+  --cod-gray-400: #927E81;
+  --cod-gray-600: #655557;
+
+  /* --- Borders --- */
+  --border: #E4E4E7;                       /* default border (zinc-200) */
+  --border-strong: #D4D4D8;               /* input borders (zinc-300) */
+  --border-subtle: rgba(0, 0, 0, 0.05);   /* very faint separators */
+
+  /* --- Shadows (product-console) --- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0px 1px 2px rgba(0, 0, 0, 0.1), 0px 10px 20px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0px 4px 8px rgba(0, 0, 0, 0.12), 0px 0px 32px rgba(0, 0, 0, 0.04);
+
+  /* --- Radius --- */
+  --radius: 8px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+}
+
+
+/* ========== DESIGN TOKENS: DARK MODE ========== */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #27272A;
+    --surface: #3F3F46;
+    --surface-elevated: #52525B;
+    --surface-muted: #52525B;
+
+    --text: #F4F4F5;
+    --text-secondary: #A1A1AA;
+    --text-muted: #71717A;
+    --text-inverse: #27272A;
+
+    --accent: #FDCB28;
+    --accent-dim: rgba(253, 203, 40, 0.2);
+    --accent-text: #27272A;
+
+    --border: #52525B;
+    --border-strong: #71717A;
+    --border-subtle: rgba(255, 255, 255, 0.06);
+
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0px 2px 4px rgba(0, 0, 0, 0.3), 0px 10px 20px rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0px 4px 8px rgba(0, 0, 0, 0.4), 0px 0px 32px rgba(0, 0, 0, 0.15);
+  }
+}
+
+
+/* ========== RESET & BASE ========== */
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+  padding: 40px 20px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+
+/* ========== CONTAINER ========== */
+
+.container {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+
+/* ========== HEADER ========== */
+
+.lerian-header {
+  margin-bottom: 32px;
+}
+
+.lerian-header a {
+  display: inline-block;
+  text-decoration: none;
+  color: var(--text);
+  transition: color 0.2s ease;
+}
+
+.lerian-header a:hover {
+  color: var(--accent);
+}
+
+.lerian-header .logo-mark {
+  width: 100px;
+  height: auto;
+  display: block;
+}
+
+
+/* ========== TYPOGRAPHY ========== */
+
+h1 {
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1.2;
+  margin-bottom: 8px;
+}
+
+h2 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  line-height: 1.3;
+  margin-bottom: 12px;
+}
+
+h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+
+p {
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+
+/* ========== STANDARD UTILITIES: CARDS ========== */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+.card-elevated {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  box-shadow: var(--shadow-md);
+}
+
+
+/* ========== STANDARD UTILITIES: BADGES ========== */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.badge-success { background: var(--success-bg); color: #166534; }
+.badge-warning { background: var(--warning-bg); color: #854d0e; }
+.badge-error   { background: var(--error-bg);   color: #991b1b; }
+.badge-info    { background: var(--info-bg);     color: #1e40af; }
+.badge-accent  { background: var(--accent-dim);  color: var(--accent-text); }
+.badge-neutral { background: var(--surface-muted); color: var(--text-secondary); }
+
+@media (prefers-color-scheme: dark) {
+  .badge-success { color: #bbf7d0; }
+  .badge-warning { color: #fef08a; }
+  .badge-error   { color: #fecaca; }
+  .badge-info    { color: #bfdbfe; }
+}
+
+
+/* ========== STANDARD UTILITIES: STATUS DOTS ========== */
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot-success { background: var(--success); }
+.status-dot-warning { background: var(--warning); }
+.status-dot-error   { background: var(--error); }
+.status-dot-info    { background: var(--info); }
+
+
+/* ========== STANDARD UTILITIES: TABLES ========== */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.data-table thead th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.data-table tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text);
+}
+
+.data-table tbody tr:hover {
+  background: rgba(253, 203, 40, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  .data-table tbody tr:hover {
+    background: rgba(253, 203, 40, 0.06);
+  }
+}
+
+
+/* ========== STANDARD UTILITIES: TEXT ========== */
+
+.mono { font-family: var(--font-mono); }
+
+.text-muted     { color: var(--text-muted); }
+.text-secondary { color: var(--text-secondary); }
+.text-accent    { color: var(--accent); }
+.text-success   { color: var(--success); }
+.text-error     { color: var(--error); }
+
+.font-medium    { font-weight: 500; }
+.font-semibold  { font-weight: 600; }
+.font-bold      { font-weight: 700; }
+
+
+/* ========== ANIMATIONS ========== */
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate {
+  opacity: 0;
+  animation: fadeUp 0.5s ease-out forwards;
+  animation-delay: calc(var(--i, 0) * 0.05s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+
+/* ========== FOOTER ========== */
+
+.lerian-footer {
+  margin-top: 64px;
+  padding: 24px 0;
+  border-top: 1px solid var(--border);
+  position: relative;
+}
+
+/* Full-bleed background via pseudo-element */
+.lerian-footer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  height: 100%;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  z-index: -1;
+}
+
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.footer-brand .logo-mark {
+  height: 20px;
+  width: auto;
+  color: var(--text);
+}
+
+.footer-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.footer-company {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.footer-link {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.footer-link:hover {
+  color: var(--accent);
+}
+
+.footer-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.footer-generated {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.footer-generated strong {
+  font-weight: 600;
+}
+
+.footer-date {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+
+/* ========== RESPONSIVE ========== */
+
+@media (max-width: 768px) {
+  body {
+    padding: 20px;
+  }
+
+  h1 {
+    font-size: 28px;
+  }
+
+  h2 {
+    font-size: 19px;
+  }
+
+  .footer-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .footer-meta {
+    align-items: flex-start;
+  }
+
+  .data-table {
+    font-size: 13px;
+  }
+
+  .data-table thead th,
+  .data-table tbody td {
+    padding: 10px 12px;
+  }
+}
+
+
+/* ========== PRINT ========== */
+
+@media print {
+  body {
+    background: #fff;
+    color: #000;
+    padding: 20px;
+  }
+
+  .card,
+  .card-elevated {
+    box-shadow: none;
+    border: 1px solid #ddd;
+  }
+
+  .lerian-header {
+    margin-bottom: 16px;
+  }
+
+  .lerian-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    border-top: 1px solid #ddd;
+    background: #fff;
+    padding: 12px 20px;
+  }
+
+  .lerian-footer::before {
+    display: none;
+  }
+
+  .animate {
+    opacity: 1 !important;
+    animation: none !important;
+  }
+
+  .logo-mark {
+    color: #27272A !important;
+  }
+}
+
+
+/* ========== LERIAN STANDARD: DO NOT MODIFY ABOVE THIS LINE ========== */
+/* Diagram-specific styles go below */
+/* ========== TEMPLATE-SPECIFIC STYLES ========== */
+:root {
+  --node-forward: var(--info);
+  --node-forward-dim: var(--info-dim);
+  --node-diff: var(--tangerine-500);
+  --node-phys: var(--de-york-400);
+  --node-sum: var(--cod-gray-600);
+  --node-bwd: var(--accent);
+}
+
+body {
+  background: var(--bg);
+  background-image:
+    radial-gradient(ellipse 70% 55% at 50% -10%, var(--accent-dim) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 45% at 100% 95%, rgba(37, 99, 235, 0.09) 0%, transparent 42%);
+  padding: 24px 16px 48px;
+}
+
+.container.paper {
+  max-width: min(1320px, 100%);
+}
+
+.lerian-header {
+  margin-bottom: 14px;
+}
+
+.lerian-header .logo-mark {
+  width: 72px;
+}
+
+.fig-caption {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+}
+
+.fig-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  max-width: 960px;
+  line-height: 1.55;
+}
+
+.paper-frame {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 16px 12px 18px;
+  box-shadow: var(--shadow-sm);
+  overflow-x: auto;
+}
+
+.flow-main {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-width: min-content;
+}
+
+.flow-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.flow-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  color: var(--text-muted);
+  font-size: 17px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.node-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  min-width: 0;
+  max-width: 198px;
+  overflow-wrap: break-word;
+}
+
+.node-box--muted {
+  background: var(--surface-muted);
+}
+
+.node-box--fwd {
+  border-color: color-mix(in srgb, var(--border) 72%, var(--node-forward) 28%);
+  border-top: 3px solid var(--node-forward);
+}
+
+.node-box--diff {
+  border-color: color-mix(in srgb, var(--border) 65%, var(--node-diff) 35%);
+  border-top: 3px solid var(--node-diff);
+}
+
+.node-box--phys {
+  border-color: color-mix(in srgb, var(--border) 65%, var(--node-phys) 35%);
+  border-top: 3px solid var(--node-phys);
+}
+
+.node-box--sum {
+  border-color: color-mix(in srgb, var(--border) 55%, var(--node-sum) 45%);
+  border-top: 3px solid var(--node-sum);
+}
+
+.node-box--bwd {
+  background: color-mix(in srgb, var(--surface) 90%, var(--node-bwd) 10%);
+  border-color: color-mix(in srgb, var(--border) 55%, var(--node-bwd) 45%);
+  border-top: 3px solid var(--node-bwd);
+}
+
+.node-k {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+
+.node-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.node-lines {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  font-family: var(--font-mono);
+}
+
+.node-lines code {
+  font-size: 10px;
+  background: var(--surface-muted);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.branch-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  justify-content: center;
+}
+
+.merge-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 3px;
+}
+
+.merge-op {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.legend-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px dashed var(--border);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.legend-swatch {
+  width: 22px;
+  height: 6px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-swatch--fwd { background: var(--node-forward); }
+.legend-swatch--diff { background: var(--node-diff); }
+.legend-swatch--phys { background: var(--node-phys); }
+.legend-swatch--sum { background: var(--node-sum); }
+.legend-swatch--bwd { background: var(--node-bwd); }
+
+.loss-merge-col {
+  min-width: 0;
+}
+
+.loss-merge {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 8px 10px;
+  align-items: center;
+  max-width: 448px;
+}
+
+.loss-merge__lpix {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.loss-merge__phys {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+}
+
+.loss-merge__phys .branch-stack {
+  margin-bottom: 6px;
+}
+
+.loss-merge__phys .node-box {
+  max-width: none;
+}
+
+.loss-merge__plus {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1;
+}
+
+.loss-merge__total {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  min-width: 0;
+}
+
+.loss-merge__total .node-box {
+  max-width: none;
+}
+
+.loss-merge__hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  line-height: 1.35;
+}
+
+@media (max-width: 900px) {
+  .flow-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .flow-arrow {
+    transform: rotate(90deg);
+    padding: 4px 0;
+  }
+  .node-box {
+    max-width: none;
+  }
+
+  .loss-merge {
+    max-width: none;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  .loss-merge__plus {
+    grid-column: 1;
+    grid-row: auto;
+    padding: 4px 0;
+  }
+
+  .loss-merge__total {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .loss-merge__lpix,
+  .loss-merge__phys {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+</style>
+</head>
+<body>
+<div class="container paper">
+
+  <header class="lerian-header">
+    <a href="https://lerian.studio" aria-label="Lerian Studio">
+      <svg class="logo-mark" viewBox="0 0 1090.88 280" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+        <path fill-rule="evenodd" d="M619.42,29.69c0,15.43-10.87,27.93-27.93,27.93s-27.93-12.51-27.93-27.93,10.86-27.93,27.92-27.93,27.93,12.51,27.93,27.93h0ZM158.64,242.4v33.54H12.13v-33.55h48.36c3.16,0,5.73-2.57,5.73-5.73V87.77c0-3.16-2.57-5.73-5.73-5.73H7.85v-34.31h98.33v188.94c0,3.16,2.57,5.73,5.73,5.73h46.74ZM168.85,179.86c0,58.52,37.29,98.33,99.47,98.33,49.15,0,79.7-30.6,86.27-67.08h-40.69c-6.29,24.54-26.97,33.91-48.61,33.91-48.85,0-53.41-45.18-53.83-55-.04-1.02.77-1.87,1.79-1.87h143.61c.76-5.26,1.13-10.42,1.13-15.44,0-32.71-20.25-91.92-95.33-91.92-57.04,0-93.8,41.26-93.81,99.07ZM314.47,158.39l-99.49.02c-1.08,0-1.94-.96-1.78-2.02,4.49-31.28,30.98-42.82,50.98-42.82,33.88,0,48.71,21.59,52.08,42.79.17,1.08-.69,2.04-1.78,2.04h0ZM867.2,83.16h0s0,0,0,0h0ZM826.87,83.16h40.33v192.83h-40.32v-24.53c0-3.09-3.92-4.41-5.79-1.95-.18.23-.35.47-.53.71h0s0,.02,0,.02h0c-.11.16-.23.32-.35.47-7.92,10.56-20.68,27.53-56.24,27.53-60.83,0-91.19-46.33-91.19-98.7,0-61.42,40.37-98.72,91.17-98.72,36.73,0,48.44,15.73,56.64,26.75l.49.66c1.86,2.49,5.81,1.18,5.81-1.93v-23.14ZM770.75,115.48c34.78,0,56.14,27.81,56.14,64.8h0c0,42-26.32,63.68-56.14,63.68-34.83,0-56.14-27.43-56.14-64.43,0-42.07,26.11-64.05,56.14-64.05ZM1063.39,101.7c14.42,14.06,21.64,36.67,21.64,67.8v106.25h-41.06v-103.99c0-43.98-22.35-56.14-45.96-56.14-31.99,0-51.6,23.22-51.6,62.92v97.21h-40.68V83.15h39.93v25.07c0,3.11,3.95,4.4,5.82,1.92,8.55-11.4,26.72-29.52,55.98-29.52,37.55,0,55.75,20.88,55.93,21.08ZM657.42,275.94v-33.54h0s-37.37,0-37.37,0c-3.16,0-5.73-2.57-5.73-5.73V83.14h-81.34v34.31h37.54c3.16,0,5.73,2.57,5.73,5.73v113.48c0,3.16-2.57,5.73-5.73,5.73h-38.14v33.55h125.03ZM499.27,119.27c0,.13-.1.23-.23.23h0s-36.31,0-36.31,0c-28.68,0-28.65,24.99-28.64,43.62,0,.46,0,.92,0,1.37v111.24c0,.13-.1.23-.23.23h-41.01c-.13,0-.23-.1-.23-.23V83.27c0-.13.1-.23.23-.23h36.49c.13,0,.23.1.23.23v24.03c0,4.05,5.24,5.65,7.49,2.28.22-.32.43-.64.65-.97,8.18-12.25,18.71-28.02,52.51-28.02h9.05v38.68Z"/>
+      </svg>
+    </a>
+  </header>
+
+  <p class="fig-caption">圖：DehazeDDPM（netH-physical）單步訓練之資料流與損失組合（示意）</p>
+  <p class="fig-sub">條件模組 <span class="mono">netH</span> 由霧圖 <span class="mono">SR</span> 產生物理分解量；擴散分支在 <span class="mono">HR</span> 上加噪並以 UNet 預測噪聲得 <span class="mono">l_pix</span>。物理監督 <span class="mono">loss_t</span>、<span class="mono">loss_asm</span> 加權合成 <span class="mono">loss_physical_total</span>，再與 <span class="mono">l_pix</span> 相加為 <span class="mono">loss_total</span> 反傳。</p>
+
+  <figure class="paper-frame" aria-label="訓練資料流">
+    <div class="flow-main">
+      <div class="flow-col">
+        <div class="node-box node-box--muted">
+          <div class="node-k">Batch</div>
+          <div class="node-title">訓練樣本</div>
+          <div class="node-lines"><code>SR</code> 霧圖<br><code>HR</code> 清晰 GT<br><code>depth</code>、<code>beta</code></div>
+        </div>
+      </div>
+      <div class="flow-arrow" aria-hidden="true">→</div>
+      <div class="flow-col">
+        <div class="node-box node-box--fwd">
+          <div class="node-k">Forward</div>
+          <div class="node-title">netH（MPRfusion）</div>
+          <div class="node-lines">輸入：<code>SR</code></div>
+        </div>
+      </div>
+      <div class="flow-arrow" aria-hidden="true">→</div>
+      <div class="flow-col">
+        <div class="node-box node-box--fwd">
+          <div class="node-k">Outputs</div>
+          <div class="node-title">物理與條件</div>
+          <div class="node-lines"><code>out_J</code>、<code>out_T</code><br><code>out_A</code>、<code>out_I</code></div>
+        </div>
+      </div>
+      <div class="flow-arrow" aria-hidden="true">→</div>
+      <div class="flow-col">
+        <div class="node-box node-box--diff">
+          <div class="node-k">Diffusion</div>
+          <div class="node-title">高斯擴散分支</div>
+          <div class="node-lines"><code>cond</code>=cat(<code>out_J</code>,<code>out_T</code>) norm<br><code>x_t</code> 自 <code>HR</code> 加噪<br>UNet → <code>pred_noise</code></div>
+        </div>
+      </div>
+      <div class="flow-arrow" aria-hidden="true">→</div>
+      <div class="flow-col loss-merge-col" aria-label="擴散與物理損失合併">
+        <div class="loss-merge">
+          <div class="loss-merge__lpix">
+            <div class="node-box node-box--diff">
+              <div class="node-k">Diffusion loss</div>
+              <div class="node-title"><code>l_pix</code></div>
+              <div class="node-lines">L1 噪聲項<br>+ 0.01·|FFT(<code>x0_pred</code>)|<br>vs |FFT(<code>HR</code>)|，÷(BCHW)</div>
+            </div>
+          </div>
+          <div class="loss-merge__plus" aria-hidden="true">+</div>
+          <div class="loss-merge__total">
+            <div class="node-box node-box--sum">
+              <div class="node-k">Total</div>
+              <div class="node-title"><code>loss_total</code></div>
+              <div class="node-lines"><code>l_pix</code> + <code>loss_physical_total</code></div>
+            </div>
+          </div>
+          <div class="loss-merge__phys">
+            <div class="loss-merge__hint">物理監督（同一前向之 <code>out_*</code>、batch 之 <code>depth</code>/<code>beta</code>、<code>hazy</code><sub>01</sub>；需 <code>finetune_netH</code>）</div>
+            <div class="branch-stack">
+              <div class="node-box node-box--phys">
+                <div class="node-k">Physical</div>
+                <div class="node-title"><code>loss_t</code></div>
+                <div class="node-lines">L1(<code>out_T</code>, <code>exp(−β·depth)</code>)<br>λ<sub>t</sub>=0.01</div>
+              </div>
+              <div class="node-box node-box--phys">
+                <div class="node-k">Physical</div>
+                <div class="node-title"><code>loss_asm</code></div>
+                <div class="node-lines">L1(<code>out_I</code>, <code>hazy</code><sub>01</sub>)<br>λ<sub>asm</sub>=0.05</div>
+              </div>
+            </div>
+            <div class="node-box node-box--sum">
+              <div class="node-k">Sum</div>
+              <div class="node-title"><code>loss_physical_total</code></div>
+              <div class="node-lines">λ<sub>t</sub>·<code>loss_t</code><br>+ λ<sub>asm</sub>·<code>loss_asm</code></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="flow-arrow" aria-hidden="true">→</div>
+      <div class="flow-col">
+        <div class="node-box node-box--bwd">
+          <div class="node-k">Backward</div>
+          <div class="node-title">反傳與更新</div>
+          <div class="node-lines">∇θ：<code>netH</code> + UNet(<code>netG</code>)</div>
+        </div>
+      </div>
+    </div>
+    <div class="legend-row">
+      <div class="legend-item"><span class="legend-swatch legend-swatch--fwd"></span>前向與條件路徑</div>
+      <div class="legend-item"><span class="legend-swatch legend-swatch--diff"></span>擴散與 <code class="mono" style="font-size:10px">l_pix</code></div>
+      <div class="legend-item"><span class="legend-swatch legend-swatch--phys"></span>物理監督</div>
+      <div class="legend-item"><span class="legend-swatch legend-swatch--sum"></span>加總</div>
+      <div class="legend-item"><span class="legend-swatch legend-swatch--bwd"></span>反向傳播</div>
+    </div>
+  </figure>
+
+  <footer class="lerian-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <svg class="logo-mark" viewBox="0 0 1090.88 280" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <path fill-rule="evenodd" d="M619.42,29.69c0,15.43-10.87,27.93-27.93,27.93s-27.93-12.51-27.93-27.93,10.86-27.93,27.92-27.93,27.93,12.51,27.93,27.93h0ZM158.64,242.4v33.54H12.13v-33.55h48.36c3.16,0,5.73-2.57,5.73-5.73V87.77c0-3.16-2.57-5.73-5.73-5.73H7.85v-34.31h98.33v188.94c0,3.16,2.57,5.73,5.73,5.73h46.74ZM168.85,179.86c0,58.52,37.29,98.33,99.47,98.33,49.15,0,79.7-30.6,86.27-67.08h-40.69c-6.29,24.54-26.97,33.91-48.61,33.91-48.85,0-53.41-45.18-53.83-55-.04-1.02.77-1.87,1.79-1.87h143.61c.76-5.26,1.13-10.42,1.13-15.44,0-32.71-20.25-91.92-95.33-91.92-57.04,0-93.8,41.26-93.81,99.07ZM314.47,158.39l-99.49.02c-1.08,0-1.94-.96-1.78-2.02,4.49-31.28,30.98-42.82,50.98-42.82,33.88,0,48.71,21.59,52.08,42.79.17,1.08-.69,2.04-1.78,2.04h0ZM867.2,83.16h0s0,0,0,0h0ZM826.87,83.16h40.33v192.83h-40.32v-24.53c0-3.09-3.92-4.41-5.79-1.95-.18.23-.35.47-.53.71h0s0,.02,0,.02h0c-.11.16-.23.32-.35.47-7.92,10.56-20.68,27.53-56.24,27.53-60.83,0-91.19-46.33-91.19-98.7,0-61.42,40.37-98.72,91.17-98.72,36.73,0,48.44,15.73,56.64,26.75l.49.66c1.86,2.49,5.81,1.18,5.81-1.93v-23.14ZM770.75,115.48c34.78,0,56.14,27.81,56.14,64.8h0c0,42-26.32,63.68-56.14,63.68-34.83,0-56.14-27.43-56.14-64.43,0-42.07,26.11-64.05,56.14-64.05ZM1063.39,101.7c14.42,14.06,21.64,36.67,21.64,67.8v106.25h-41.06v-103.99c0-43.98-22.35-56.14-45.96-56.14-31.99,0-51.6,23.22-51.6,62.92v97.21h-40.68V83.15h39.93v25.07c0,3.11,3.95,4.4,5.82,1.92,8.55-11.4,26.72-29.52,55.98-29.52,37.55,0,55.75,20.88,55.93,21.08ZM657.42,275.94v-33.54h0s-37.37,0-37.37,0c-3.16,0-5.73-2.57-5.73-5.73V83.14h-81.34v34.31h37.54c3.16,0,5.73,2.57,5.73,5.73v113.48c0,3.16-2.57,5.73-5.73,5.73h-38.14v33.55h125.03ZM499.27,119.27c0,.13-.1.23-.23.23h0s-36.31,0-36.31,0c-28.68,0-28.65,24.99-28.64,43.62,0,.46,0,.92,0,1.37v111.24c0,.13-.1.23-.23.23h-41.01c-.13,0-.23-.1-.23-.23V83.27c0-.13.1-.23.23-.23h36.49c.13,0,.23.1.23.23v24.03c0,4.05,5.24,5.65,7.49,2.28.22-.32.43-.64.65-.97,8.18-12.25,18.71-28.02,52.51-28.02h9.05v38.68Z"/>
+        </svg>
+        <div class="footer-brand-text">
+          <span class="footer-company">Lerian Studio</span>
+          <a href="https://lerian.studio" class="footer-link">lerian.studio</a>
+        </div>
+      </div>
+      <div class="footer-meta">
+        <span class="footer-generated">Generated with <strong>Ring</strong></span>
+        <span class="footer-date"></span>
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+  var footerDate = document.querySelector('.footer-date');
+  if (footerDate) footerDate.textContent = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+</script>
+
+</body>
+</html>
