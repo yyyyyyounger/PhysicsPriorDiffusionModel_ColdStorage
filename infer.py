@@ -212,6 +212,13 @@ def main():
     Logger.setup_logger('val', opt['path']['log'], 'val', level=logging.INFO)
     logger = logging.getLogger('base')
 
+    logger.info('Config file: {}'.format(os.path.abspath(args.config)))
+    logger.info(Logger.dict2str(opt))
+    config_snapshot = os.path.join(opt['path']['log'], 'config_resolved.json')
+    with open(config_snapshot, 'w', encoding='utf-8') as f:
+        json.dump(_opt_to_plain(opt), f, indent=2, ensure_ascii=False)
+    logger.info('Resolved config saved to {}'.format(config_snapshot))
+
     if num_gpus <= 1:
         wandb_logger = WandbLogger(opt) if opt['enable_wandb'] else None
         tb_logger = SummaryWriter(log_dir=opt['path']['tb_logger'])
@@ -219,7 +226,7 @@ def main():
         psnr_sum, count = run_inference_worker(
             opt, rank=0, world_size=1,
             wandb_logger=wandb_logger,
-            log_full_opt=True,
+            log_full_opt=False,
             setup_worker_log=False)
 
         avg_psnr = psnr_sum / count if count else 0.0
