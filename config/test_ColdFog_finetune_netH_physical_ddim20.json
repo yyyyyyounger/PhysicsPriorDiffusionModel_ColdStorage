@@ -1,5 +1,5 @@
 {
-    "name": "Dehaze_ColdFog_finetune_netH_physical_ddim20",
+    "name": "Dehaze_ColdFog_finetune_test_ddim20_physical_v1",
     "phase": "train",
     "gpu_ids": [
         2,3
@@ -11,9 +11,9 @@
         "tb_logger": "tb_logger",
         "results": "results",
         "checkpoint": "checkpoint",
-        "resume_state": "/mnt/newdisk/Documents/linzhanyang/DehazeDDPM/Diffusion_trained_pth/best_val_checkpoints_0406",
+        "resume_state": "/mnt/newdisk/Documents/linzhanyang/DehazeDDPM/experiments/Dehaze_ColdFog_finetune_netH_physical_v1_260508_123402/checkpoint/I75000_E268",
         "resume_stateH": "./pretrained_PreNet_pth/DENSE_net_g_120000.pth",
-        "resume_stateH_finetune": "/mnt/newdisk/Documents/linzhanyang/DehazeDDPM/Diffusion_trained_pth/best_val_checkpoints_0406_netH.pth"
+        "resume_stateH_finetune": "/mnt/newdisk/Documents/linzhanyang/DehazeDDPM/experiments/Dehaze_ColdFog_finetune_netH_physical_v1_260508_123402/checkpoint/I75000_E268_netH.pth"
     },
     "datasets": {
         "train": {
