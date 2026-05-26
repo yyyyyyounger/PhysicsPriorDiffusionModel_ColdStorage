@@ -1,8 +1,8 @@
 {
-    "name": "Dehaze_test",
+    "name": "Dehaze_ColdFog_pretrain_NH_ddim100",
     "phase": "train", // train or val
     "gpu_ids": [
-        2
+        2,3
     ],
     "manual_seed": 42,
     "manual_seed_deterministic": false,
@@ -28,11 +28,11 @@
             "len": -1 // -1 represents all data used in train
         },
         "val": {
-            "name": "SOTS",
-            "img_sizeH": 512, //576, //512 , // whether need LR img
-            "img_sizeW": 672, //768, //672 , // whether need LR img
-            "datarootlq": "/mnt/newdisk/Documents/linzhanyang/data/dehazeddpm_test/hazy_test",
-            "dataroothq": "/mnt/newdisk/Documents/linzhanyang/data/dehazeddpm_test/gt_test",
+            "name": "ColdFog_dehazeddpm_test",
+            "img_sizeH": 448, //576, //512 , // whether need LR img
+            "img_sizeW": 576, //768, //672 , // whether need LR img
+            "datarootlq": "/mnt/newdisk/Documents/linzhanyang/data/dehazeddpm_test/hazy_test",  
+            "dataroothq": "/mnt/newdisk/Documents/linzhanyang/data/dehazeddpm_test/gt_test", 
             "datatype": "img", //lmdb or img, path of img files
             "len": -1 // data length in validation
         }
@@ -69,7 +69,10 @@
                 "schedule": "linear",
                 "n_timestep": 2000,
                 "linear_start": 1e-6,
-                "linear_end": 1e-2
+                "linear_end": 1e-2,
+                "sampler": "ddim",
+                "sample_steps": 100,
+                "ddim_eta": 0.0
             }
         },
         "diffusion": {

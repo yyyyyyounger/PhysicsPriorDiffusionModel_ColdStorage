@@ -1,8 +1,8 @@
 {
-    "name": "Dehaze_test_DENSE_diy",
+    "name": "Dehaze_ColdFog_pretrain_DENSE_ddim100",
     "phase": "train", // train or val
     "gpu_ids": [
-        0
+        2,3
     ],
     "manual_seed": 42,
     "manual_seed_deterministic": false,
@@ -69,7 +69,10 @@
                 "schedule": "linear",
                 "n_timestep": 2000,
                 "linear_start": 1e-6,
-                "linear_end": 1e-2
+                "linear_end": 1e-2,
+                "sampler": "ddim",
+                "sample_steps": 100,
+                "ddim_eta": 0.0
             }
         },
         "diffusion": {
