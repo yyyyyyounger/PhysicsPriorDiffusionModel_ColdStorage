@@ -27,6 +27,58 @@ def _opt_to_plain(opt):
     return opt
 
 
+def _build_metrics_payload(per_image_records):
+    """Build summary + per-image metrics dict from a list of sample records."""
+    count = len(per_image_records)
+    if count == 0:
+        return {
+            'summary': {'count': 0, 'psnr_mean': 0.0, 'ssim_mean': 0.0},
+            'per_image': [],
+        }
+    psnr_sum = sum(r['psnr'] for r in per_image_records)
+    ssim_sum = sum(r['ssim'] for r in per_image_records)
+    return {
+        'summary': {
+            'count': count,
+            'psnr_mean': psnr_sum / count,
+            'ssim_mean': ssim_sum / count,
+        },
+        'per_image': sorted(per_image_records, key=lambda r: r['index']),
+    }
+
+
+def _save_metrics_json(path, per_image_records):
+    payload = _build_metrics_payload(per_image_records)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    return payload
+
+
+def _merge_rank_metrics(metrics_dir, num_gpus):
+    """Merge per-rank metrics files into one combined per-image list."""
+    merged = []
+    for rank in range(num_gpus):
+        metrics_path = os.path.join(
+            metrics_dir, 'infer_rank{}_metrics.json'.format(rank))
+        with open(metrics_path, 'r', encoding='utf-8') as f:
+            part_metrics = json.load(f)
+        merged.extend(part_metrics.get('per_image', []))
+    return merged
+
+
+def _log_metrics_summary(logger, payload, log_per_image=False, prefix=''):
+    summary = payload['summary']
+    logger.info(
+        '{}# Validation # PSNR: {:.4e}, SSIM: {:.4e} ({} samples)'.format(
+            prefix, summary['psnr_mean'], summary['ssim_mean'], summary['count']))
+    if not log_per_image:
+        return
+    for record in payload['per_image']:
+        logger.info(
+            '{}Sample {:d}: PSNR {:.4e}, SSIM {:.4e}'.format(
+                prefix, record['index'], record['psnr'], record['ssim']))
+
+
 def run_inference_worker(opt, rank, world_size, wandb_logger=None,
                          log_full_opt=True, setup_worker_log=False):
     """
@@ -41,7 +93,7 @@ def run_inference_worker(opt, rank, world_size, wandb_logger=None,
         setup_worker_log: If True, write worker-only log file infer_rank{rank}.log.
 
     Returns:
-        (psnr_sum, count): Weighted PSNR sum and number of samples processed.
+        (psnr_sum, ssim_sum, count, per_image_records): Aggregates and per-image metrics.
     """
     logger = logging.getLogger('base')
     if setup_worker_log:
@@ -94,7 +146,9 @@ def run_inference_worker(opt, rank, world_size, wandb_logger=None,
     os.makedirs(result_path, exist_ok=True)
 
     psnr_sum = 0.0
+    ssim_sum = 0.0
     count = 0
+    per_image_records = []
 
     manual_seed = opt['manual_seed']
     if manual_seed is None:
@@ -130,21 +184,34 @@ def run_inference_worker(opt, rank, world_size, wandb_logger=None,
             visuals, result_path,
             '{}_{}'.format(current_step, sample_idx_1based))
 
-        psnr_sum += Metrics.calculate_psnr(
-            Metrics.tensor2img(visuals['Out'][-1]), hr_img)
+        out_img = Metrics.tensor2img(visuals['Out'][-1])
+        psnr = Metrics.calculate_psnr(out_img, hr_img)
+        ssim = Metrics.calculate_ssim(out_img, hr_img)
+        psnr_sum += psnr
+        ssim_sum += ssim
         count += 1
+        per_image_records.append({
+            'index': sample_idx_1based,
+            'psnr': float(psnr),
+            'ssim': float(ssim),
+        })
+        logger.info(
+            '{}Sample {:d}: PSNR {:.4e}, SSIM {:.4e}'.format(
+                prefix, sample_idx_1based, psnr, ssim))
 
         if wandb_logger is not None and opt.get('log_infer'):
-            wandb_logger.log_eval_data(
-                lr_img, Metrics.tensor2img(visuals['Out'][-1]), hr_img)
+            wandb_logger.log_eval_data(lr_img, out_img, hr_img, psnr, ssim)
 
     diffusion.set_new_noise_schedule(
         opt['model']['beta_schedule']['train'], schedule_phase='train')
 
     if world_size > 1:
         logger.info(
-            'Worker rank {}: local PSNR mean {:.4e} over {} samples.'.format(
-                rank, psnr_sum / count if count else 0.0, count))
+            'Worker rank {}: local PSNR mean {:.4e}, SSIM mean {:.4e} over {} samples.'.format(
+                rank,
+                psnr_sum / count if count else 0.0,
+                ssim_sum / count if count else 0.0,
+                count))
 
     if wandb_logger is not None and opt.get('log_infer'):
         wandb_logger.log_eval_table(commit=True)
@@ -155,7 +222,7 @@ def run_inference_worker(opt, rank, world_size, wandb_logger=None,
         torch.cuda.empty_cache()
     gc.collect()
 
-    return psnr_sum, count
+    return psnr_sum, ssim_sum, count, per_image_records
 
 
 def _infer_spawn_fn(rank, opt_plain, metrics_dir):
@@ -170,15 +237,20 @@ def _infer_spawn_fn(rank, opt_plain, metrics_dir):
         deterministic=bool(opt.get('manual_seed_deterministic')),
     )
 
-    psnr_sum, count = run_inference_worker(
+    psnr_sum, ssim_sum, count, per_image_records = run_inference_worker(
         opt, rank=rank, world_size=len(opt_plain['gpu_ids']),
         wandb_logger=None,
         log_full_opt=False,
         setup_worker_log=True)
     metrics_path = os.path.join(
         metrics_dir, 'infer_rank{}_metrics.json'.format(rank))
-    with open(metrics_path, 'w') as f:
-        json.dump({'psnr_sum': float(psnr_sum), 'count': int(count)}, f)
+    with open(metrics_path, 'w', encoding='utf-8') as f:
+        json.dump({
+            'psnr_sum': float(psnr_sum),
+            'ssim_sum': float(ssim_sum),
+            'count': int(count),
+            'per_image': per_image_records,
+        }, f, indent=2, ensure_ascii=False)
 
 
 def main():
@@ -223,14 +295,16 @@ def main():
         wandb_logger = WandbLogger(opt) if opt['enable_wandb'] else None
         tb_logger = SummaryWriter(log_dir=opt['path']['tb_logger'])
 
-        psnr_sum, count = run_inference_worker(
+        _, _, _, per_image_records = run_inference_worker(
             opt, rank=0, world_size=1,
             wandb_logger=wandb_logger,
             log_full_opt=False,
             setup_worker_log=False)
 
-        avg_psnr = psnr_sum / count if count else 0.0
-        logger.info('# Validation # PSNR: {:.4e}'.format(avg_psnr))
+        metrics_path = os.path.join(opt['path']['log'], 'per_image_metrics.json')
+        payload = _save_metrics_json(metrics_path, per_image_records)
+        logger.info('Per-image metrics saved to {}'.format(metrics_path))
+        _log_metrics_summary(logger, payload)
         tb_logger.close()
         return
 
@@ -254,18 +328,12 @@ def main():
         nprocs=num_gpus,
         join=True)
 
-    total_psnr_sum = 0.0
-    total_count = 0
-    for rank in range(num_gpus):
-        metrics_path = os.path.join(
-            metrics_dir, 'infer_rank{}_metrics.json'.format(rank))
-        with open(metrics_path, 'r') as f:
-            part_metrics = json.load(f)
-        total_psnr_sum += float(part_metrics['psnr_sum'])
-        total_count += int(part_metrics['count'])
+    merged_records = _merge_rank_metrics(metrics_dir, num_gpus)
 
-    avg_psnr = total_psnr_sum / total_count if total_count else 0.0
-    logger.info('# Validation # PSNR: {:.4e}'.format(avg_psnr))
+    metrics_path = os.path.join(metrics_dir, 'per_image_metrics.json')
+    payload = _save_metrics_json(metrics_path, merged_records)
+    logger.info('Per-image metrics saved to {}'.format(metrics_path))
+    _log_metrics_summary(logger, payload, log_per_image=True)
 
 
 if __name__ == "__main__":
