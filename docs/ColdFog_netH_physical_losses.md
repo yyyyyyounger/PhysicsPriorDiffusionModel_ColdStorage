@@ -1,16 +1,26 @@
 # ColdFog netH Physical 版本 Loss 說明
 
-本文檔整理當前實驗 `Dehaze_ColdFog_finetune_netH_physical_260508_123402` 中各個 loss 的計算方式、對比項來源與日誌含義，便於導入給其他 AI 或用於後續結果分析。
+本文檔整理當前 `netG + netH` 訓練配置中的 loss 計算方式、對比項來源與日誌含義，便於導入給其他 AI 或用於後續結果分析。
+
+> 2026-05-27 只讀複查結論：本文件中 physical 版本的主要公式仍成立；需要補充的是，當前倉庫同時保留「普通 netG+netH」和「netG+netH physical」兩種訓練入口。普通 `trainColdFogNetH.sh` 不提供 `depth/beta` metadata，因此實際總 loss 只有 `l_pix`；`trainColdFogNetHPhysical.sh` 才會在 `l_pix` 之外加入 `loss_t` 和 `loss_asm`。未發現 `l_simple`、`l_vlb`、perceptual/VGG、GAN/adversarial、dark-channel 或名為 `PhysicalDegradationLoss` 的訓練 loss。
 
 ## 1. 實驗版本與入口
 
-- 入口腳本：`trainColdFogNetHPhysical.sh`
-- 實際命令：`python sr.py --config config/Dehaze_ColdFog_finetune_netH_physical.json`
-- 實驗目錄：`experiments/Dehaze_ColdFog_finetune_netH_physical_260508_123402/`
+- 普通 netG+netH 入口：`trainColdFogNetH.sh`
+- 普通 netG+netH 命令：`python sr.py --config config/Dehaze_ColdFog_finetune_netH.json`
+- Physical 入口：`trainColdFogNetHPhysical.sh`
+- Physical 命令：`python sr.py --config config/Dehaze_ColdFog_finetune_netH_physical.json`
 - 模型類：`model.model.DDPM`
 - 擴散模型：`which_model_G = "sr3"`，即 `model/sr3_modules/diffusion.py` 的 `GaussianDiffusion + UNet`
 - 第一階段/條件網路：`netH = model.networkHelper.MPRfusion()`
-- 當前配置開啟：`finetune_netH = true`
+- 兩個 netG+netH 訓練配置都開啟：`finetune_netH = true`
+
+兩種配置的差別是：
+
+| 配置 | 是否微調 netH | 是否提供 `depth/beta` | 實際訓練總 loss |
+| --- | --- | --- | --- |
+| `config/Dehaze_ColdFog_finetune_netH.json` | 是 | 否 | `loss_total = l_pix` |
+| `config/Dehaze_ColdFog_finetune_netH_physical.json` | 是 | 是，來自 metadata | `loss_total = l_pix + 0.01 * loss_t + 0.05 * loss_asm` |
 
 訓練時 `netH` 輸入 hazy 圖，輸出：
 
@@ -64,12 +74,14 @@ l_pix loss_t loss_asm loss_physical_total loss_total
 | 日誌 key | 對比項 | 公式概要 | 是否反傳 | 權重 |
 | --- | --- | --- | --- | --- |
 | `l_pix` | diffusion 預測噪聲 vs 真實噪聲；另含頻域重建項 | `(L1_sum(noise, pred_noise) + 0.01 * L1_sum(abs(FFT(x0_pred)), abs(FFT(HR)))) / (B*C*H*W)` | 是 | 1.0 |
-| `loss_t` | `out_T` vs `exp(-beta * depth)` | `L1(clamp(out_T), clamp(t_gt))` | 是，當 `finetune_netH=true` 且有 `depth/beta` | `lambda_t=0.01` |
-| `loss_asm` | `out_I` vs 輸入 hazy 圖 | `L1(out_I, hazy_input_01)` | 是，當 `finetune_netH=true` 且有 `depth/beta` | `lambda_asm=0.05` |
+| `loss_t` | `out_T` vs `exp(-beta * depth)` | `L1_mean(clamp(out_T), clamp(t_gt))` | 只在 `finetune_netH=true` 且有 `depth/beta/out_T/out_I` 時反傳；普通 netG+netH 配置中為 0 | `lambda_t=0.01` |
+| `loss_asm` | `out_I` vs 輸入 hazy 圖 | `L1_mean(out_I, hazy_input_01)` | 只在 `finetune_netH=true` 且有 `depth/beta/out_T/out_I` 時反傳；普通 netG+netH 配置中為 0 | `lambda_asm=0.05` |
 | `loss_physical_total` | 物理約束總和 | `0.01 * loss_t + 0.05 * loss_asm` | 是 | 已加權 |
 | `loss_total` | 總訓練 loss | `l_pix + loss_physical_total` | 是 | 已加權 |
 
 注意：`loss_t` 本身是未乘權重的原始 L1；真正加進總 loss 的是 `0.01 * loss_t`。`loss_asm` 同理，真正加進總 loss 的是 `0.05 * loss_asm`。
+
+普通 `config/Dehaze_ColdFog_finetune_netH.json` 沒有 `metadata_csv`，batch 中沒有 `depth/beta`，所以雖然 log key 仍可能存在，`loss_t/loss_asm/loss_physical_total` 實際都是 0，訓練退化為只用 `l_pix` 同時更新 netG 與 netH。
 
 ## 4. `l_pix`: diffusion 訓練 loss
 
@@ -142,7 +154,7 @@ l_pix = loss_diffusion_raw / (B * C * H * W)
 
 ### 4.3 解讀
 
-雖然名稱叫 `l_pix`，但它不是簡單的「輸出去霧圖 vs GT 清晰圖」像素 L1。它實際上是 diffusion 的噪聲預測 L1，加上一個基於 FFT 幅值的頻域重建約束，再除以 batch 內像素總數。
+雖然名稱叫 `l_pix`，但它不是簡單的「輸出去霧圖 vs GT 清晰圖」像素 L1。它實際上是 diffusion 的噪聲預測 L1，加上一個基於 FFT 幅值的頻域重建約束，再除以 batch 內像素總數。當前 `define_G()` 固定傳入 `loss_type="l1"`；沒有使用 DDPM 文獻中常見的 `l_simple/l_vlb` 命名，也沒有 perceptual 或 GAN loss。
 
 ## 5. `loss_t`: 傳輸圖物理監督
 
@@ -285,7 +297,7 @@ l_pix: 5.2307e-01 loss_t: 1.3905e-01 loss_asm: 7.7069e-02 loss_physical_total: 5
 - 已經有 `out_T`
 - 已經有 `out_I`
 
-如果不滿足，`loss_t` 和 `loss_asm` 都會是 0。
+如果不滿足，`loss_t` 和 `loss_asm` 都會是 0。這正是普通 `trainColdFogNetH.sh` 的情況：它會微調 netH，但沒有 metadata 物理目標，因此總 loss 等於 `l_pix`。
 
 ## 8. metadata 與物理參數來源
 
@@ -306,7 +318,7 @@ dataset 會優先從 metadata 讀：
 | `beta` | 散射係數，用於計算 `t_gt` |
 | `split` | 過濾 train / val |
 
-如果 metadata 不存在，代碼才會回退到資料夾配對。但當前 physical 配置有 metadata，因此 `loss_t` 的 `depth/beta` 來源就是 metadata。
+如果 metadata 不存在，代碼才會回退到資料夾配對。當前 physical 配置有 metadata，因此 `loss_t` 的 `depth/beta` 來源就是 metadata；普通 netG+netH 配置沒有 metadata，因此不會產生物理 loss。
 
 ## 9. 驗證階段的 loss
 
@@ -329,13 +341,17 @@ dataset 會優先從 metadata 讀：
 5. 物理 loss 權重較小：`loss_t` 乘 0.01，`loss_asm` 乘 0.05；分析數值時要看加權後的 `loss_physical_total`。
 6. `loss_total` 中 diffusion loss 仍然占主導，物理 loss 主要是輔助約束 `netH` 的物理中間量。
 7. validation 的物理 loss 是在推理/採樣後重新計算的物理一致性指標，不等同於訓練 step 的 `loss_total`。
+8. 若報告中寫「netG+netH」要分清版本：普通 netG+netH 是 `l_pix` only；netG+netH physical 才是 `l_pix + loss_t + loss_asm`。
+9. 當前代碼未使用 `l_simple/l_vlb`、perceptual/VGG、GAN/adversarial、dark-channel 或 `PhysicalDegradationLoss`。
 
 ## 11. 主要代碼位置
 
 | 文件 | 內容 |
 | --- | --- |
+| `trainColdFogNetH.sh` | 普通 netG+netH 訓練入口；只用 `l_pix` |
 | `trainColdFogNetHPhysical.sh` | physical 版本訓練入口 |
-| `config/Dehaze_ColdFog_finetune_netH_physical.json` | 當前實驗配置、loss 權重、資料集、採樣器 |
+| `config/Dehaze_ColdFog_finetune_netH.json` | 普通 netG+netH 配置，無 metadata 物理目標 |
+| `config/Dehaze_ColdFog_finetune_netH_physical.json` | physical 實驗配置、loss 權重、資料集、採樣器 |
 | `sr.py` | 訓練循環、日誌輸出、驗證流程 |
 | `model/model.py` | `DDPM.optimize_parameters()`、物理 loss 計算、總 loss 組合 |
 | `model/sr3_modules/diffusion.py` | diffusion noise loss 和 frequency loss |
