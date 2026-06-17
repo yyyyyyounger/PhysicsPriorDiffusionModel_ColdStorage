@@ -7,3 +7,5 @@ data/NH-HAZE/
 Diffusion_trained_pth/
 
 .env
+
+.DS_Store
