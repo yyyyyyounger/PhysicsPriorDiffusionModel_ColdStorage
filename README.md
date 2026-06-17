@@ -1,15 +1,21 @@
-# DehazeDDPM
-This is the codebase for [High-quality Image Dehazing with Diffusion Model](https://arxiv.org/abs/2308.11949).
+# PPDM倉庫說明
+本項目是一個面向**冷庫低溫霧化場景**的單圖像去霧模型，基於 [DehazeDDPM](https://github.com/yuhuUSTC/DehazeDDPM) 二次開發。
 
-# Download pre-trained models
+原始 DehazeDDPM 將去霧建模為條件擴散過程，在通用霧霾數據集上表現優異，但其預訓練模型在冷庫這類**由低溫水汽凝結形成的近距離、高濃度霧**場景下存在明顯的域差（domain gap）。
 
-This method employs a two-stage pipline. The pre-trained model of the first stage is within the 'pretrained_PreNet_pth' file.
+為此，本項目重新構建了冷庫合成霧數據集，引入 Depth Anything V2 作為深度先驗以生成更符合物理的霧化圖像，並對訓練流程與霧濃度分級（Light / Medium / Heavy）進行了適配，使模型在目標場景下的去霧效果顯著優於直接套用的原始模型。
+
+## Download pre-trained models (DehazeDDPM)
+僅在需要測試原pretrain checkpoints時使用。
+
+The pre-trained model of the first stage is within the 'pretrained_PreNet_pth' file.
 Here are the download links for the second-stage model checkpoint: [Diffusion_trained_pth](https://drive.google.com/drive/folders/1I7sH6vb9oWOZeIVu6-xh9Xm5lnwdzHa7?usp=drive_link)
 
 
+# 環境配置
 使用conda環境：
 ```
-conda activate lzy_dehazeddpm
+conda activate dehazeddpm
 
 pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu121
 
@@ -21,7 +27,7 @@ pip install tensorboardX wandb numpy opencv-python Pillow tqdm lmdb matplotlib
 CUDA_VISIBLE_DEVICES=3 bash testDENSE.sh
 ```
 
-## 訓練：從頭與接續
+# 訓練：從頭與接續
 
 訓練入口為 `python sr.py --config <json>`（例如 `bash trainColdFog.sh`）。以下路徑皆相對於專案根目錄、且需在根目錄執行。
 
@@ -119,28 +125,3 @@ bash testColdFogFinetune_ddim.sh -gpu 0,1
 # 或在 JSON 中設定 "gpu_ids": [0, 1] 後直接：
 python infer.py --config config/test_ColdFog_finetune_ddim.json
 ```
-
-
-後臺運行
-```
-# 1) 開新 session
-tmux new -s dehaze
-
-# 2) 在 tmux 內執行
-conda activate lzy_dehazeddpm
-cd /mnt/newdisk/Documents/linzhanyang/DehazeDDPM
-python infer.py --config ./config/test_DENSE_diy.json
-# 或 NH:
-python infer.py --config ./config/test_NH_diy.json
-
-
-離開但不中斷：Ctrl + a，不鬆手再按 d
-之後重連 SSH 回來看：tmux attach -t dehaze
-看目前 session：tmux ls
-```
-
-20260226 Baseline結果：
-NH 80 張Test結果：# Validation # PSNR: 1.4448e+01
-Dense 結果：# Validation # PSNR: 1.4432e+01
-
-到 data/results_analysis.ipynb 跑PSNR、SSIM的分析結果
