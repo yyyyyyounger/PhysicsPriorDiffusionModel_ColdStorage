@@ -5,3 +5,5 @@ data/Dense_Haze/
 data/NH-HAZE/
 
 Diffusion_trained_pth/
+
+.env
