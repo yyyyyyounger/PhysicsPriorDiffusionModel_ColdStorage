@@ -1,63 +1,65 @@
-# PPDM — Physics-Prior Diffusion Model for Image Dehazing in Cold Storage Scenes
+# PPDM - Physics-Prior Diffusion Model for Image Dehazing in Cold Storage Scenes
 
-**PPDM**（Physics-Prior Diffusion Model）是一個面向**冷庫低溫霧化場景**的單圖像去霧模型。它以條件擴散去霧為骨幹，引入**物理先驗**（深度、透射率、大氣散射模型），專門解決冷庫中**由低溫水汽凝結形成的近距離、高濃度霧**所造成的去霧難題。
+中文版: [README_CN.md](README_CN.md).
 
-通用去霧模型在冷庫場景下存在明顯的域差（domain gap）：霧由低溫凝結而非遠景大氣造成，濃度高、空間分佈與一般戶外霧霾不同。PPDM 針對此問題提出：
+**PPDM** (Physics-Prior Diffusion Model) is a single-image dehazing model for **low-temperature fogging in cold storage scenes**. It uses a conditional diffusion dehazing backbone and injects **physics priors** including depth, transmission, and the atmospheric scattering model. The target problem is the short-range, high-density fog caused by water vapor condensation in cold storage environments.
 
-- **冷庫物理合成資料集**：引入 [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) 作為深度先驗，依大氣散射模型合成符合物理的霧化圖像，並按霧濃度分級（Light / Medium / Heavy）。
-- **物理先驗注入與三層遞進訓練**：**只微調擴散主幹 netG → 聯合微調 netG + 條件網路 netH → 再加入物理損失（透射率 / 大氣散射一致性）**，讓生成結果同時受重建損失與物理約束監督。
-- **高效推理與評測**：支援快速採樣器（DDIM、DPM-Solver++）、多 GPU 推理，並提供論文出圖與 SAM 下游分割評測。
+General-purpose dehazing models have a clear domain gap in cold storage scenes: the fog is caused by low-temperature condensation rather than distant atmospheric haze, and it is denser with a different spatial distribution. PPDM addresses this with:
 
-> PPDM 的擴散骨幹與條件網路改造自 [DehazeDDPM](https://github.com/yuhuUSTC/DehazeDDPM)；本倉庫中的 `netG`（擴散主幹）、`netH`（條件 / PreNet）等命名沿用自該基線。
+- **A physics-based synthetic cold-storage fog dataset**: [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) is used as the depth prior, and foggy images are synthesized with the atmospheric scattering model at Light / Medium / Heavy density levels.
+- **Physics-prior injection with three-stage progressive training**: **finetune diffusion backbone netG only -> jointly finetune netG + condition network netH -> add physics losses for transmission and atmospheric scattering consistency**. The restored images are supervised by both reconstruction and physics constraints.
+- **Efficient inference and evaluation**: DDIM and DPM-Solver++ fast samplers, multi-GPU inference, paper figure generation, and SAM-based downstream segmentation evaluation are included.
+
+> The diffusion backbone and condition network are adapted from [DehazeDDPM](https://github.com/yuhuUSTC/DehazeDDPM). Names such as `netG` (diffusion backbone) and `netH` (condition / PreNet) follow that baseline.
 
 <p align="center">
-  <img src="docs/images/ppdm_whole.png" alt="PPDM 模型結構與物理損失" width="850"><br>
-  <em>PPDM 整體架構。Stage 1 由 netH 估計物理先驗（透射率 t̂、大氣光 Â 等），Stage 2 為條件擴散 netG 還原清晰影像。訓練在原重建損失 𝓛<sub>base</sub> 之外，加入兩個物理約束：<strong>透射率損失 𝓛<sub>t</sub></strong> 與 <strong>ASM 大氣散射重建損失 𝓛<sub>ASM</sub></strong>，總損失 𝓛<sub>total</sub> = λ<sub>ASM</sub>·𝓛<sub>ASM</sub> + λ<sub>t</sub>·𝓛<sub>t</sub> + 𝓛<sub>base</sub>。</em>
+  <img src="docs/images/ppdm_whole.png" alt="PPDM architecture and physics losses" width="850"><br>
+  <em>Overall PPDM architecture. Stage 1 estimates physics priors such as transmission t_hat and atmospheric light A_hat with netH. Stage 2 restores the clear image with conditional diffusion netG. Besides the original reconstruction loss L_base, training adds two physics constraints: <strong>transmission loss L_t</strong> and <strong>ASM reconstruction loss L_ASM</strong>. The total loss is L_total = lambda_ASM * L_ASM + lambda_t * L_t + L_base.</em>
 </p>
 
 ---
 
-## 目錄結構
+## Repository Structure
 
-| 路徑 | 內容 |
+| Path | Description |
 | --- | --- |
-| `sr.py` | 訓練入口（`python sr.py --config <json>`）。 |
-| `infer.py` | 推理 / 採樣入口，支援多 GPU 依樣本切分。 |
-| `config/` | 所有實驗設定（訓練與測試）。命名見下方對照表。 |
-| `model/` | PPDM 模型定義：擴散主幹 netG（`sr3_modules`、`ddpm_modules`）、條件網路 netH、物理損失（`model.py`）。 |
-| `core/` | logger、metrics、wandb、seed 等工具。 |
-| `data/` | 資料載入（`LRHR_dataset.py`）與資料集建構腳本。 |
-| `data/dataset/` | **冷庫資料集建構說明與腳本**，見 [data/dataset/README.md](data/dataset/README.md)。 |
-| `Diffusion_trained_pth/` | 第二階段擴散 checkpoint（已被 `.gitignore`，需另行取得）。 |
-| `pretrained_PreNet_pth/` | 第一階段 PreNet（netH）權重。 |
-| `experiments/` | 訓練輸出（logs / checkpoint / tb_logger，已被 `.gitignore`）。 |
-| `plot/` | 論文（第五章）出圖與分析 notebook，見 [出圖與分析](#出圖與分析)。 |
-| `sam_coldfog_test/` | SAM 下游分割評測子專案，見 [sam_coldfog_test/README.md](sam_coldfog_test/README.md)。 |
-| `*.sh` | 各實驗的訓練 / 測試啟動腳本。 |
+| `sr.py` | Training entry point: `python sr.py --config <json>`. |
+| `infer.py` | Inference / sampling entry point, with multi-GPU sample splitting. |
+| `config/` | Experiment configs for training and testing. See the tables below for naming. |
+| `model/` | PPDM model definitions: diffusion backbone netG (`sr3_modules`, `ddpm_modules`), condition network netH, and physics losses (`model.py`). |
+| `core/` | Utilities for logging, metrics, W&B, seeds, and related helpers. |
+| `data/` | Data loading (`LRHR_dataset.py`) and dataset construction scripts. |
+| `data/dataset/` | Cold-storage dataset construction notes and scripts. See [data/dataset/README.md](data/dataset/README.md). |
+| `Diffusion_trained_pth/` | Stage-2 diffusion checkpoints. This directory is ignored by git and must be obtained separately. |
+| `pretrained_PreNet_pth/` | Stage-1 PreNet (`netH`) weights. |
+| `experiments/` | Training outputs: logs, checkpoints, and TensorBoard logs. This directory is ignored by git. |
+| `plot/` | Paper figure generation and analysis notebooks for Chapter 5. See [Figures and Analysis](#figures-and-analysis). |
+| `sam_coldfog_test/` | SAM downstream segmentation evaluation subproject. See [sam_coldfog_test/README.md](sam_coldfog_test/README.md). |
+| `*.sh` | Training and testing launch scripts for the experiments. |
 
 ---
 
-## 程式碼來源與外部依賴
+## Code Sources and External Dependencies
 
-PPDM 的完整工作流橫跨三個程式庫。資料集建構（深度估計）與下游評測（SAM）原本分別在 [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) 與 [Segment Anything](https://github.com/facebookresearch/segment-anything) 的官方 repo 中執行；為了統一提交，本倉庫**只整理了與 PPDM 直接相關的關鍵腳本**（例如 `data/dataset/` 的合成腳本、`sam_coldfog_test/` 的評測腳本）。
+The full PPDM workflow spans three codebases. Dataset construction uses depth estimation, and downstream evaluation uses SAM. These were originally run inside the official [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) and [Segment Anything](https://github.com/facebookresearch/segment-anything) repositories. For a clean submission, this repository only includes the key scripts directly related to PPDM, such as the synthesis scripts under `data/dataset/` and the evaluation scripts under `sam_coldfog_test/`.
 
-因此，要完整重現本項目，你需要在本倉庫之外另外取得這兩個官方 repo：
+To fully reproduce the project, you need to clone the two official repositories separately:
 
-| 步驟 | 程式碼位置 | 本倉庫內的對應說明 |
+| Step | Code location | Documentation in this repository |
 | --- | --- | --- |
-| 去霧訓練 / 推理（PPDM 主體） | **本倉庫** | 本 README |
-| 深度先驗 / 霧合成 | 另行 clone [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) | [data/dataset/README.md](data/dataset/README.md) |
-| SAM 下游分割評測 | 另行 clone [Segment Anything](https://github.com/facebookresearch/segment-anything) | [sam_coldfog_test/README.md](sam_coldfog_test/README.md) |
+| Dehazing training / inference (PPDM main code) | **This repository** | This README |
+| Depth prior / fog synthesis | Clone [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) separately | [data/dataset/README.md](data/dataset/README.md) |
+| SAM downstream segmentation evaluation | Clone [Segment Anything](https://github.com/facebookresearch/segment-anything) separately | [sam_coldfog_test/README.md](sam_coldfog_test/README.md) |
 
-> 兩個子 README 內若出現本機絕對路徑（如 `/mnt/newdisk/.../Depth-Anything-V2`、`/mnt/newdisk/.../segment-anything`），請替換成你自己 clone 的位置。
+> If the two sub-READMEs contain local absolute paths such as `/mnt/newdisk/.../Depth-Anything-V2` or `/mnt/newdisk/.../segment-anything`, replace them with your own clone locations.
 
-## 環境配置
+## Environment Setup
 
-由於三個程式庫的依賴不同，建議**建立三個獨立的 conda 環境**（環境名稱可自訂，以下僅為建議）：
+Because the three codebases use different dependencies, using **three separate conda environments** is recommended. The names below are only suggestions.
 
-### 1. PPDM 去霧主環境
+### 1. Main PPDM Dehazing Environment
 
-訓練與推理本去霧模型使用。
+Use this environment for training and inference of the dehazing model.
 
 ```bash
 conda create -n ppdm python=3.10 -y
@@ -68,34 +70,34 @@ pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorc
 pip install tensorboardX wandb numpy opencv-python Pillow tqdm lmdb matplotlib
 ```
 
-### 2. 深度估計環境（資料集建構）
+### 2. Depth Estimation Environment for Dataset Construction
 
-跑 Depth Anything V2 產生深度先驗、合成冷庫霧時使用。**在 Depth Anything V2 的 repo 內**安裝其官方依賴：
+Use this environment to run Depth Anything V2 for depth priors and cold-storage fog synthesis. Install the official dependencies **inside the Depth Anything V2 repository**:
 
 ```bash
 conda create -n ppdm-depth python=3.10 -y
 conda activate ppdm-depth
 
-# 於 Depth-Anything-V2/ 目錄下
+# In Depth-Anything-V2/
 pip install -r requirements.txt
-# 若使用 metric depth（本項目使用），再裝 metric_depth 的依賴
+# If using metric depth, as this project does, also install:
 pip install -r metric_depth/requirements.txt
 ```
 
-### 3. SAM 評測環境（下游評測）
+### 3. SAM Evaluation Environment
 
-跑 `sam_coldfog_test/` 的分割評測時使用。**在 Segment Anything 的 repo 內**安裝：
+Use this environment for the segmentation evaluation under `sam_coldfog_test/`. Install dependencies **inside the Segment Anything repository**:
 
 ```bash
 conda create -n ppdm-sam python=3.10 -y
 conda activate ppdm-sam
 
-# 於 segment-anything/ 目錄下
+# In segment-anything/
 pip install -e .
 pip install opencv-python pycocotools matplotlib onnxruntime onnx
 ```
 
-指定 GPU 運行（主環境）：
+Run on a specific GPU from the main environment:
 
 ```bash
 CUDA_VISIBLE_DEVICES=3 bash testDENSE.sh
@@ -103,97 +105,99 @@ CUDA_VISIBLE_DEVICES=3 bash testDENSE.sh
 
 ---
 
-## 資料與權重下載
+## Data and Checkpoint Download
 
-PPDM 微調 checkpoint 與冷庫合成霧資料集集中放在同一百度網盤：
+The PPDM finetuned checkpoints and the synthetic cold-storage fog dataset are stored in one Baidu Netdisk folder:
 
-| 內容 | 放置位置 |
+| Content | Target location |
 | --- | --- |
-| PPDM 微調 checkpoint | 解壓至 `Diffusion_trained_pth/` 或 `experiments/`（依網盤內目錄結構）；推理時將 config 內 `path.resume_state` 指向前綴（不含 `_gen.pth`）。 |
-| 冷庫合成霧資料集 | 解壓至專案 `data/` 下，並依實際路徑修改 config 內 `datasets.*.dataroot`、`finetune_root`、`metadata_csv`。 |
+| PPDM finetuned checkpoints | Extract to `Diffusion_trained_pth/` or `experiments/`, depending on the folder layout in the archive. For inference, set `path.resume_state` in the config to the checkpoint prefix without `_gen.pth`. |
+| Synthetic cold-storage fog dataset | Extract under the project `data/` directory, then update `datasets.*.dataroot`, `finetune_root`, and `metadata_csv` in the configs according to the actual paths. |
 
-**百度網盤：** [https://pan.baidu.com/s/1Uj3H0aOS8PqIfT_x7NAYNA?pwd=8w2i](https://pan.baidu.com/s/1Uj3H0aOS8PqIfT_x7NAYNA?pwd=8w2i)
+**Baidu Netdisk:** [https://pan.baidu.com/s/1Uj3H0aOS8PqIfT_x7NAYNA?pwd=8w2i](https://pan.baidu.com/s/1Uj3H0aOS8PqIfT_x7NAYNA?pwd=8w2i)
 
-亦可依下方[訓練流程](#訓練)自行產生 checkpoint，或依[從頭建構](#從頭建構)重建資料集。
+You can also generate checkpoints through the [training workflow](#training), or rebuild the dataset by following [Build From Scratch](#build-from-scratch).
 
 ---
 
-## 預訓練權重
+## Pretrained Weights
 
-PPDM 以 DehazeDDPM 的預訓練權重作為微調起點。僅在需要重現**基線**或從頭微調時才需下載：
+PPDM uses the DehazeDDPM pretrained weights as the finetuning starting point. These are only needed when reproducing the **baseline** or finetuning from scratch:
 
-- 第一階段 PreNet（netH）權重在 `pretrained_PreNet_pth/`。
-- 第二階段擴散主幹 checkpoint 下載：[Diffusion_trained_pth](https://drive.google.com/drive/folders/1I7sH6vb9oWOZeIVu6-xh9Xm5lnwdzHa7?usp=drive_link)（DehazeDDPM 原作者提供）。
+- Stage-1 PreNet (`netH`) weights are stored in `pretrained_PreNet_pth/`.
+- Stage-2 diffusion backbone checkpoint: [Diffusion_trained_pth](https://drive.google.com/drive/folders/1I7sH6vb9oWOZeIVu6-xh9Xm5lnwdzHa7?usp=drive_link), provided by the DehazeDDPM authors.
 
 ### PPDM Pretrained Checkpoint
 
-PPDM 在冷庫資料上微調後的 checkpoint 未隨倉庫提供，請從上方 [**資料與權重下載**](#資料與權重下載) 取得。
+The PPDM checkpoint finetuned on cold-storage data is not included in the repository. Download it from [Data and Checkpoint Download](#data-and-checkpoint-download).
 
 ---
 
-## 資料集
+## Dataset
 
 <p align="center">
-  <img src="docs/images/ppdm_teaser.png" alt="冷庫合成霧資料集構建總覽" width="850"><br>
-  <em>資料集構建總覽。約 400 張冷庫清晰影像經 Depth Anything V2 估計深度，再依大氣散射模型（ASM）按透射率合成 Light / Medium / Heavy 三級霧圖，作為 PPDM 的訓練與評測資料。</em>
+  <img src="docs/images/ppdm_teaser.png" alt="Synthetic cold-storage fog dataset construction overview" width="850"><br>
+  <em>Dataset construction overview. About 400 clear cold-storage images are processed by Depth Anything V2 for depth estimation, then Light / Medium / Heavy fog images are synthesized with the atmospheric scattering model for PPDM training and evaluation.</em>
 </p>
 
-### 下載
+### Download
 
-冷庫合成霧資料集（清晰圖、分濃度霧圖、split 與微調用扁平目錄）請從上方 [**資料與權重下載**](#資料與權重下載) 取得。
+Download the synthetic cold-storage fog dataset, including clear images, fog images at different density levels, splits, and flattened finetuning folders, from [Data and Checkpoint Download](#data-and-checkpoint-download).
 
-### 從頭建構
+### Build From Scratch
 
-若要從原始清晰圖自行重建資料集，完整流程（清晰圖採集 → Depth Anything V2 深度 → 依大氣散射模型合成 Light/Medium/Heavy 霧 → split → 微調用扁平目錄）詳見：
+To rebuild the dataset from the original clear images, follow the complete workflow here:
 
-**➡ [data/dataset/README.md](data/dataset/README.md)**
+**[data/dataset/README.md](data/dataset/README.md)**
 
-相關腳本：`data/dataset/synthesize_fog.ipynb`、`data/dataset/split.ipynb`、`data/dataset/prepare_finetune_data.py`、`data/prepare_data.py`。深度估計步驟需在 Depth Anything V2 repo 內、使用 `ppdm-depth` 環境執行。
+The workflow covers clear image collection, Depth Anything V2 depth estimation, atmospheric-scattering-based Light / Medium / Heavy fog synthesis, split generation, and flattened finetuning data preparation.
 
-> 各 config 內的 `datasets.*.dataroot`、`finetune_root`、`metadata_csv` 目前指向本機絕對路徑（例如 `/mnt/newdisk/.../data/finetune`）。在新機器上請依實際資料位置修改這些欄位。
+Related scripts: `data/dataset/synthesize_fog.ipynb`, `data/dataset/split.ipynb`, `data/dataset/prepare_finetune_data.py`, and `data/prepare_data.py`. The depth estimation step must be run inside the Depth Anything V2 repository with the `ppdm-depth` environment.
+
+> The `datasets.*.dataroot`, `finetune_root`, and `metadata_csv` fields in the configs currently point to local absolute paths such as `/mnt/newdisk/.../data/finetune`. Update these fields on a new machine.
 
 ---
 
-## 訓練
+## Training
 
-訓練入口為 `python sr.py --config <json>`。以下路徑皆相對於專案根目錄、且需在根目錄執行。
+The training entry point is `python sr.py --config <json>`. Run the following commands from the project root. Paths below are relative to the project root.
 
-### 三種微調設定
+### Three Finetuning Settings
 
-| 設定 / 啟動腳本 | config | 說明 |
+| Setting / launch script | Config | Description |
 | --- | --- | --- |
-| `trainColdFog.sh` | `Dehaze_ColdFog_finetune.json` | **只微調擴散 netG**（netH 凍結）。 |
-| `trainColdFogNetH.sh` | `Dehaze_ColdFog_finetune_netH.json` | **聯合微調 netG + netH**（`finetune_netH: true`，netH 用較小的 `lr_netH`，預設 `1e-5`）。 |
-| `trainColdFogNetHPhysical.sh` | `Dehaze_ColdFog_finetune_netH_physical.json` | netG + netH **再加入物理損失**：透射率損失 `lambda_t` 與大氣散射模型損失 `lambda_asm`，總損失 = `l_pix + lambda_t·loss_t + lambda_asm·loss_asm`。驗證採 DDIM 20 步。需提供 `resume_stateH_finetune`（已微調的 netH 權重）與物理目標（`metadata_csv` / `finetune_root`）。 |
+| `trainColdFog.sh` | `Dehaze_ColdFog_finetune.json` | **Finetune diffusion netG only** while keeping netH frozen. |
+| `trainColdFogNetH.sh` | `Dehaze_ColdFog_finetune_netH.json` | **Jointly finetune netG + netH** with `finetune_netH: true`; netH uses a smaller `lr_netH`, default `1e-5`. |
+| `trainColdFogNetHPhysical.sh` | `Dehaze_ColdFog_finetune_netH_physical.json` | Finetune netG + netH **with physics losses**: transmission loss `lambda_t` and atmospheric scattering model loss `lambda_asm`. Total loss = `l_pix + lambda_t * loss_t + lambda_asm * loss_asm`. Validation uses DDIM with 20 steps. Requires `resume_stateH_finetune` for the finetuned netH weights and physics targets from `metadata_csv` / `finetune_root`. |
 
-對應的接續訓練腳本：`trainColdFog_resume.sh`、`trainColdFogNetH_resume.sh`（後者把 netH 物理訓練續跑到 `n_iter=200000`）。
+Resume scripts: `trainColdFog_resume.sh` and `trainColdFogNetH_resume.sh`. The latter resumes netH physical training up to `n_iter=200000`.
 
-### 從頭訓練（新實驗目錄）
+### Train From Scratch in a New Experiment Directory
 
-- **不要**在設定檔的 `path` 裡加入 `reuse_experiments_root`。程式會自動建立 `experiments/<name>_<時間戳>/`，並將 `logs`、`checkpoint`、`tb_logger` 等寫入該目錄。
-- **`resume_state`**：填二階段擴散預訓練的**前綴**（不含 `_gen.pth`），例如 `./Diffusion_trained_pth/DENSE_I130000_E2600`。程式會載入 `..._gen.pth`。
-- 若該前綴路徑**沒有**對應的 `..._opt.pth`（僅預訓練權重），則只載入網路權重，**iteration 從 0 開始**，屬預期行為。
-- **`resume_stateH`**：第一階段 PreNet（netH）權重路徑（與原專案相同）。
-- **`resume_stateH_finetune`**（僅 netH 物理設定用到）：已微調過的 netH 權重前綴 `..._netH.pth`，用來在物理階段接續 netH。
+- Do **not** add `reuse_experiments_root` under `path` in the config. The program will automatically create `experiments/<name>_<timestamp>/` and write logs, checkpoints, and TensorBoard logs there.
+- **`resume_state`** should be the prefix of the stage-2 diffusion pretrained checkpoint, without `_gen.pth`, for example `./Diffusion_trained_pth/DENSE_I130000_E2600`. The code will load `..._gen.pth`.
+- If there is no matching `..._opt.pth` for the prefix, meaning it is only a pretrained network weight, the code loads only model weights and starts the iteration counter from 0. This is expected.
+- **`resume_stateH`** should be the Stage-1 PreNet (`netH`) weight path, as in the original project.
+- **`resume_stateH_finetune`** is only used by the netH physical config. It points to a finetuned netH weight prefix ending in `..._netH.pth`, so the physical stage can continue from that netH.
 
-### 接續訓練（同一實驗目錄 + log 接續）
+### Resume Training in the Same Experiment Directory
 
-中斷後若要從**最近一次存檔**繼續跑到 `train.n_iter`（例如 100000），並讓 **`train.log` / `val.log` 接在舊檔後面**（不覆寫）：
+To resume from the latest saved checkpoint after interruption, continue until `train.n_iter` such as 100000, and append to the existing **`train.log` / `val.log`** instead of overwriting them:
 
-1. 在 `path` 中設定 **`reuse_experiments_root`** 為既有實驗資料夾的**完整相對路徑**，例如：
+1. Set **`reuse_experiments_root`** under `path` to the full relative path of the existing experiment directory, for example:
    `experiments/Dehaze_ColdFog_finetune_only_diffusion_260417_152053`
-2. 將 **`resume_state`** 改為該實驗下 `checkpoint` 裡**一組存檔的前綴**（同樣不含 `_gen.pth`），例如：
+2. Set **`resume_state`** to the checkpoint prefix inside that experiment's `checkpoint` directory, again without `_gen.pth`, for example:
    `experiments/Dehaze_ColdFog_finetune_only_diffusion_260417_152053/checkpoint/I85000_E304`
-3. 必須同時存在 **`I85000_E304_gen.pth`** 與 **`I85000_E304_opt.pth`**，才會還原 **optimizer** 以及 **`iter` / `epoch`**，訓練才會從該 iteration 繼續；若只有 `*_gen.pth`，行為等同只載權重並從 iter 0 重跑。
-4. **`train.n_iter`** 仍為「總 iteration 上限」；接續時會從 checkpoint 記錄的 iter 繼續遞增，直到達到 `n_iter`。
+3. Both **`I85000_E304_gen.pth`** and **`I85000_E304_opt.pth`** must exist to restore the optimizer and the recorded **`iter` / `epoch`**. If only `*_gen.pth` exists, the behavior is the same as loading weights only and restarting from iteration 0.
+4. **`train.n_iter`** is still the total iteration limit. After resuming, training continues from the iteration recorded in the checkpoint until it reaches `n_iter`.
 
-**注意：** 存檔頻率由 `train.save_checkpoint_freq` 決定。若中斷發生在兩次存檔之間，磁碟上只有**上一個** checkpoint，接續後會從該點重跑中間未落盤的 iteration。TensorBoard 沿用同一 `tb_logger` 目錄時可能產生多個 event 檔，一般仍可一併檢視。
+**Note:** Checkpoint frequency is controlled by `train.save_checkpoint_freq`. If training stops between checkpoints, only the previous checkpoint exists on disk, and resuming will rerun the unsaved iterations. When reusing the same `tb_logger` directory, TensorBoard may contain multiple event files; they can usually be viewed together.
 
 ---
 
-## 推理與採樣器設定
+## Inference and Sampler Settings
 
-### 跑本項目資料集
+### Run on This Project's Dataset
 
 ```bash
 conda activate ppdm
@@ -202,29 +206,29 @@ CUDA_VISIBLE_DEVICES=3 python infer.py --config ./config/test_DENSE_diy.json
 CUDA_VISIBLE_DEVICES=2 python infer.py --config ./config/test_NH_diy.json
 ```
 
-冷庫微調模型的測試 config 與啟動腳本對照：
+Cold-storage finetuned model test configs and launch scripts:
 
-| 採樣器 | config | 腳本 |
+| Sampler | Config | Script |
 | --- | --- | --- |
-| 完整 DDPM（品質 baseline，2000 步） | `test_ColdFog_finetune.json` | `testColdFogFinetune.sh` |
+| Full DDPM quality baseline, 2000 steps | `test_ColdFog_finetune.json` | `testColdFogFinetune.sh` |
 | DDIM | `test_ColdFog_finetune_ddim.json` | `testColdFogFinetune_ddim.sh` |
 | DPM-Solver++ | `test_ColdFog_finetune_dpm_solver_pp.json` | `testColdFogFinetune_dpm_solver_pp.sh` |
-| netH 模型 | `test_ColdFog_finetune_netH.json` | `testColdFogFinetune_netH.sh` |
-| netH + 物理（DDIM 20 步） | `test_ColdFog_finetune_netH_physical_ddim20.json` | `testColdFogFinetune_physical_ddim20.sh` |
+| netH model | `test_ColdFog_finetune_netH.json` | `testColdFogFinetune_netH.sh` |
+| netH + physics, DDIM 20 steps | `test_ColdFog_finetune_netH_physical_ddim20.json` | `testColdFogFinetune_physical_ddim20.sh` |
 
-### `beta_schedule.val` 採樣器設定
+### `beta_schedule.val` Sampler Settings
 
-僅當 **`model.which_model_G` 為 `"sr3"`** 時，`GaussianDiffusion.super_resolution()` 會依設定切換採樣器；`ddpm` 路徑仍為完整反向鏈，與既有 checkpoint 相容。
+Sampler switching in `GaussianDiffusion.super_resolution()` is used only when **`model.which_model_G` is `"sr3"`**. The `ddpm` path still runs the full reverse chain and remains compatible with existing checkpoints.
 
-設定寫在 JSON 的 **`model.beta_schedule.val`**（與 `schedule`、`n_timestep`、`linear_start`、`linear_end` 同層）。**訓練**仍只使用 **`beta_schedule.train`**，不需也不應在 `train` 區塊加 `sampler`。
+The settings are placed under **`model.beta_schedule.val`** in the JSON, at the same level as `schedule`, `n_timestep`, `linear_start`, and `linear_end`. **Training** still uses only **`beta_schedule.train`**. Do not add `sampler` under the `train` block.
 
-| 欄位 | 說明 |
-|------|------|
-| **`sampler`** | 選採樣器：省略或省略整個鍵行為時，在載入 **僅含 train 的 schedule**（例如 `sr.py` 驗證後切回 train）會重設為 **`ddpm`**。可選字串（不分大小寫）：**`ddpm`**（完整 \(T\) 步）、**`ddim`**、**`dpm_solver_pp`**（亦可寫 **`dpm_solver++`**，程式會正規化成底線形式）。 |
-| **`sample_steps`** | **僅對 `ddim` / `dpm_solver_pp` 有意義**。從完整時間表（長度為 **`n_timestep`**）做跳步採樣的目標步數；**不要**為了加速而把 **`val.n_timestep`** 改成遠小於訓練時的步數來冒充少步推理（會破壞與訓練一致的 \(\bar\alpha\) 離散化）。若省略：**`ddim` 預設 100**，**`dpm_solver_pp` 預設 50**。**`ddpm`** 會忽略此欄，固定跑 **`n_timestep`** 步。 |
-| **`ddim_eta`** | **僅 `ddim` 使用**。\( \eta = 0 \) 為確定性 DDIM；\( \eta > 0 \) 會注入隨機性（類 DDPM）。預設可設 **`0.0`**。 |
+| Field | Description |
+| --- | --- |
+| **`sampler`** | Sampler name. If omitted, or if the key is missing after loading a train-only schedule such as when `sr.py` switches back after validation, the sampler resets to **`ddpm`**. Accepted strings are case-insensitive: **`ddpm`** for full T-step sampling, **`ddim`**, and **`dpm_solver_pp`**. **`dpm_solver++`** is also accepted and normalized internally. |
+| **`sample_steps`** | Used only by `ddim` and `dpm_solver_pp`. It is the target number of skipped sampling steps from the full schedule whose length is **`n_timestep`**. Do **not** reduce **`val.n_timestep`** to simulate fast inference, because that breaks the alpha-bar discretization used in training. If omitted, **`ddim` defaults to 100** and **`dpm_solver_pp` defaults to 50**. **`ddpm`** ignores this field and always runs **`n_timestep`** steps. |
+| **`ddim_eta`** | Used only by `ddim`. `eta = 0` gives deterministic DDIM; `eta > 0` injects randomness similar to DDPM. A stable default is **`0.0`**. |
 
-**範例片段（DDIM，100 步）：**
+**DDIM example, 100 steps:**
 
 ```json
 "val": {
@@ -238,7 +242,7 @@ CUDA_VISIBLE_DEVICES=2 python infer.py --config ./config/test_NH_diy.json
 }
 ```
 
-**範例片段（DPM-Solver++，50 步）：**
+**DPM-Solver++ example, 50 steps:**
 
 ```json
 "val": {
@@ -251,63 +255,65 @@ CUDA_VISIBLE_DEVICES=2 python infer.py --config ./config/test_NH_diy.json
 }
 ```
 
-**採樣器調參建議：**
+**Sampler tuning suggestions:**
 
-- **DDIM / DPM-Solver++ 不需要重新訓練。** 它們只改變驗證／推理時的反向採樣方式，不引入新的可訓練參數；後續訓練仍保持 `beta_schedule.train` 原設定即可。
-- **不要為了加速改小 `val.n_timestep`。** `n_timestep`、`linear_start`、`linear_end` 應與訓練 schedule 保持一致，例如本專案 finetune 設定為 `2000 / 1e-6 / 1e-2`。少步推理請只調 `sample_steps`。
-- **DPM-Solver++ 優先調 `sample_steps`。** 目前程式中 `order=2`、`skip_type='time_uniform'`、`clip_denoised=True` 是固定的；若 50 步結果有噪點，建議依序測 `75`、`100`、`150`、`200`，通常步數增加會提升穩定性但推理更慢。
-- **DDIM 建議先用確定性設定。** `ddim_eta: 0.0` 通常更穩；若影像已有噪點，不建議先增大 `ddim_eta`，因為 `eta > 0` 會額外注入隨機性。可對照測 `sample_steps: 100` 與 `200`。
-- **實驗比較建議。** 用完整 DDPM（`ddpm`，2000 步）作為品質 baseline，再比較 `DPM-Solver++ 50/100/150`、`DDIM 100/200` 的 PSNR、SSIM 與視覺效果；若高步數仍有明顯噪點，問題更可能來自模型權重、冷庫資料分佈或第一階段 `netH` 條件圖品質，而不是採樣器本身。
+- **DDIM / DPM-Solver++ do not require retraining.** They only change the reverse sampling method during validation or inference and introduce no trainable parameters. Future training can keep the original `beta_schedule.train` settings.
+- **Do not reduce `val.n_timestep` for speed.** Keep `n_timestep`, `linear_start`, and `linear_end` consistent with the training schedule, for example `2000 / 1e-6 / 1e-2` for this project's finetuning configs. Use only `sample_steps` for fewer inference steps.
+- **Tune `sample_steps` first for DPM-Solver++.** The current code fixes `order=2`, `skip_type='time_uniform'`, and `clip_denoised=True`. If 50 steps produce noisy results, try `75`, `100`, `150`, and `200` in order. More steps usually improve stability at the cost of speed.
+- **Start with deterministic DDIM.** `ddim_eta: 0.0` is usually more stable. If the image is already noisy, increasing `ddim_eta` is not recommended as the first fix, because `eta > 0` injects extra randomness. Compare `sample_steps: 100` and `200` first.
+- **Recommended comparison protocol.** Use full DDPM (`ddpm`, 2000 steps) as the quality baseline, then compare `DPM-Solver++ 50/100/150` and `DDIM 100/200` with PSNR, SSIM, and visual quality. If high-step samplers still produce obvious noise, the issue is more likely from model weights, cold-storage data distribution, or Stage-1 `netH` condition quality rather than the sampler itself.
 
-**程式入口對應：** `sr.py` 在驗證階段會載入 `beta_schedule.val`；`infer.py` 亦使用 **`beta_schedule.val`** 做推理。
+**Code entry points:** `sr.py` loads `beta_schedule.val` during validation, and `infer.py` also uses **`beta_schedule.val`** for inference.
 
-### `infer.py` 多 GPU 推理（依樣本切分）
+### Multi-GPU Inference in `infer.py`
 
-當設定檔中 **`gpu_ids` 超過一張**（例如 `[0, 1]`），或使用 **`python infer.py ... -gpu 0,1`** 時，程式會以 **`torch.multiprocessing.spawn`** 為每張可見 GPU 啟動一個進程，並將驗證集按 **樣本索引交錯切分**（rank `r` 處理索引 `r, r+W, r+2W, ...`）。每個進程各自載入完整模型並綁定 **`cuda:{local_rank}`**，且會將 **`distributed` 設為 False**，避免子進程再包一層 `DataParallel`。
+When **`gpu_ids` contains more than one GPU** in the config, for example `[0, 1]`, or when running **`python infer.py ... -gpu 0,1`**, the program launches one process per visible GPU with **`torch.multiprocessing.spawn`**. The validation set is split by interleaved sample indices, so rank `r` processes indices `r, r+W, r+2W, ...`. Each process loads a full model, binds to **`cuda:{local_rank}`**, and sets **`distributed` to False** to avoid wrapping another `DataParallel` layer inside each process.
 
-- **輸出檔名**：使用資料集中的 **`Index + 1`** 作為檔名中的序號（與單卡時「第 k 張圖對應 `{step}_{k+1}_*.png`」一致），多進程並行寫入同一 `results` 目錄時不會互相覆蓋。
-- **整體 PSNR**：主進程依各 worker 回傳的樣本加權平均彙總。
-- **日誌**：各 GPU 的細節寫入 **`logs/infer_rank{0,1,...}.log`**；主進程終端仍會印出總平均 PSNR。
-- **W&B**：多 GPU 模式下若開啟 **`log_infer`**，為避免多進程重複上傳，**會跳過**逐張 `log_eval_data`／表格；若需要完整 W&B 推理紀錄請改用 **單卡**。
+- **Output filenames** use **`Index + 1`** from the dataset as the sequence number, matching the single-GPU convention where the k-th image maps to `{step}_{k+1}_*.png`. Multiple processes can write to the same `results` directory without overwriting each other.
+- **Overall PSNR** is aggregated by the main process with sample-count weighting from all workers.
+- **Logs** are written to **`logs/infer_rank{0,1,...}.log`** for each GPU. The main process still prints the total average PSNR to the terminal.
+- **W&B** per-image `log_eval_data` / table logging is skipped in multi-GPU mode when **`log_infer`** is enabled, to avoid duplicate uploads from multiple processes. Use single-GPU inference if complete W&B inference records are needed.
 
-範例：
+Example:
 
 ```bash
 bash testColdFogFinetune_ddim.sh -gpu 0,1
-# 或在 JSON 中設定 "gpu_ids": [0, 1] 後直接：
+# Or set "gpu_ids": [0, 1] in JSON and run:
 python infer.py --config config/test_ColdFog_finetune_ddim.json
 ```
 
 ---
 
-## 出圖與分析
+## Figures and Analysis
 
-`plot/` 收錄論文（第五章）的圖表與分析 notebook：
+The `plot/` directory contains paper figures and analysis notebooks for Chapter 5:
 
-| 路徑 | 內容 |
+| Path | Description |
 | --- | --- |
-| `plot/plot_train_log.ipynb` | 由 `train.log` / `val.log` 繪製訓練曲線。 |
-| `plot/compare_checkpoints_testset.ipynb` | 不同 checkpoint 在測試集上的指標對照。 |
-| `plot/ch5_main_results/` | 主結果圖。 |
-| `plot/ch5_ablation/` | 消融實驗圖。 |
-| `plot/ch5_inference/` | 推理 / 採樣器對照圖。 |
-| `plot/ch5_zero_shot_failure_cases/` | 原始模型 zero-shot 失敗案例。 |
-| `plot/build_test_metadata.py`、`plot/test_metadata.json` | 測試集 metadata 建構。 |
+| `plot/plot_train_log.ipynb` | Plot training curves from `train.log` / `val.log`. |
+| `plot/compare_checkpoints_testset.ipynb` | Compare metrics from different checkpoints on the test set. |
+| `plot/ch5_main_results/` | Main result figures. |
+| `plot/ch5_ablation/` | Ablation study figures. |
+| `plot/ch5_inference/` | Inference / sampler comparison figures. |
+| `plot/ch5_zero_shot_failure_cases/` | Zero-shot failure cases of the original model. |
+| `plot/build_test_metadata.py`, `plot/test_metadata.json` | Test-set metadata construction. |
 
 ---
 
-## 下游評測（SAM）
+## Downstream Evaluation with SAM
 
-在冷庫去霧結果上以 Segment Anything（SAM）做自動分割評測，量化去霧對下游分割的幫助。流程、GPU 設定與腳本說明見：
+Segment Anything (SAM) is used to automatically segment cold-storage dehazing results and quantify how dehazing helps downstream segmentation. For the workflow, GPU settings, and scripts, see:
 
-**➡ [sam_coldfog_test/README.md](sam_coldfog_test/README.md)**（使用 `ppdm-sam` 環境，並需另行 clone Segment Anything repo）
+**[sam_coldfog_test/README.md](sam_coldfog_test/README.md)**
+
+This part uses the `ppdm-sam` environment and requires cloning the Segment Anything repository separately.
 
 ---
 
-## 致謝與引用
+## Acknowledgements and Citation
 
-PPDM 的擴散去霧骨幹基於 [DehazeDDPM](https://github.com/yuhuUSTC/DehazeDDPM)，物理先驗使用 [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2)，下游評測使用 [Segment Anything](https://github.com/facebookresearch/segment-anything)。感謝以上工作的作者。
+The PPDM diffusion dehazing backbone is based on [DehazeDDPM](https://github.com/yuhuUSTC/DehazeDDPM). Physics priors use [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2), and downstream evaluation uses [Segment Anything](https://github.com/facebookresearch/segment-anything). We thank the authors of these projects.
 
-<!-- 若本倉庫對你的研究有幫助，請引用對應報告：
+<!-- If this repository is useful for your research, please cite the corresponding report:
 
-> **Physics-Prior Diffusion Model for Image Dehazing in Cold Storage Scenes (PPDM).** -->
+> Physics-Prior Diffusion Model for Image Dehazing in Cold Storage Scenes (PPDM). -->
